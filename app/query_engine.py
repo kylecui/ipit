@@ -8,6 +8,7 @@ from ..normalizers.ip_normalizer import IPNormalizer
 from ..enrichers.semantic_enricher import SemanticEnricher
 from ..analyzers.reputation_engine import ReputationEngine
 from ..analyzers.verdict_engine import VerdictEngine
+from ..collectors import CollectorAggregator
 
 
 class QueryEngine:
@@ -23,6 +24,7 @@ class QueryEngine:
         self.semantic_enricher = SemanticEnricher()
         self.reputation_engine = ReputationEngine()
         self.verdict_engine = VerdictEngine()
+        self.collector_aggregator = CollectorAggregator()
 
     async def analyze(
         self, observable: Observable, context: Optional[ContextProfile] = None
@@ -82,10 +84,10 @@ class QueryEngine:
             raise ValueError(f"Unsupported observable type: {observable.type}")
 
     async def _collect_ip_data(self, ip: str) -> IPProfile:
-        """Placeholder for IP data collection."""
-        # This will be implemented in Sprint 2
-        # For now, return empty profile that will be normalized
-        return IPProfile(ip=ip)
+        """Collect IP data from all sources."""
+        collected_data = await self.collector_aggregator.collect_all(ip)
+        profile = self.ip_normalizer.normalize(ip, collected_data)
+        return profile
 
     async def _enrich_ip_profile(self, profile: IPProfile) -> IPProfile:
         """Enrich IP profile with semantic information."""
