@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+httpx
+typer
+pydantic
+pydantic-settings
+jinja2
+python-dotenv
+rich
+pyyaml
+pytest
+pytest-asyncio
