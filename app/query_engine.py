@@ -6,6 +6,8 @@ from typing import Dict, Any, Optional
 from ..models import Observable, ContextProfile, IPProfile, Verdict
 from ..normalizers.ip_normalizer import IPNormalizer
 from ..enrichers.semantic_enricher import SemanticEnricher
+from ..analyzers.reputation_engine import ReputationEngine
+from ..analyzers.verdict_engine import VerdictEngine
 
 
 class QueryEngine:
@@ -19,6 +21,8 @@ class QueryEngine:
         # Placeholder for future dependencies (collectors, analyzers, etc.)
         self.ip_normalizer = IPNormalizer()
         self.semantic_enricher = SemanticEnricher()
+        self.reputation_engine = ReputationEngine()
+        self.verdict_engine = VerdictEngine()
 
     async def analyze(
         self, observable: Observable, context: Optional[ContextProfile] = None
@@ -90,18 +94,21 @@ class QueryEngine:
     async def _analyze_ip_profile(
         self, profile: IPProfile, context: Optional[ContextProfile] = None
     ) -> Verdict:
-        """Placeholder for IP analysis."""
-        # This will be implemented in Sprint 4
-        return Verdict(
+        """Analyze IP profile for threats."""
+        # Get reputation score and evidence
+        reputation_score, evidence = self.reputation_engine.analyze(profile)
+
+        # For now, contextual score is 0 (will be implemented in later sprints)
+        contextual_score = 0
+
+        # Generate verdict
+        verdict = self.verdict_engine.generate_verdict(
             object_type="ip",
             object_value=profile.ip,
-            reputation_score=0,
-            contextual_score=0,
-            final_score=0,
-            level="Inconclusive",
-            confidence=0.0,
-            decision="collect_more_context",
-            summary="IP analysis not yet implemented",
-            evidence=[],
-            tags=[],
+            reputation_score=reputation_score,
+            contextual_score=contextual_score,
+            evidence=evidence,
+            tags=profile.tags,
         )
+
+        return verdict
