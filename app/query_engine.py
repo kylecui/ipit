@@ -4,6 +4,12 @@ Query orchestration engine for threat intelligence analysis.
 
 from typing import Dict, Any, Optional
 from ..models import Observable, ContextProfile, IPProfile, Verdict
+from ..normalizers.ip_normalizer import IPNormalizer
+from ..enrichers.semantic_enricher import SemanticEnricher
+
+
+class QueryEngine:
+    """Orchestrates the threat intelligence analysis pipeline."""
 
 
 class QueryEngine:
@@ -11,7 +17,8 @@ class QueryEngine:
 
     def __init__(self):
         # Placeholder for future dependencies (collectors, analyzers, etc.)
-        pass
+        self.ip_normalizer = IPNormalizer()
+        self.semantic_enricher = SemanticEnricher()
 
     async def analyze(
         self, observable: Observable, context: Optional[ContextProfile] = None
@@ -73,12 +80,12 @@ class QueryEngine:
     async def _collect_ip_data(self, ip: str) -> IPProfile:
         """Placeholder for IP data collection."""
         # This will be implemented in Sprint 2
+        # For now, return empty profile that will be normalized
         return IPProfile(ip=ip)
 
     async def _enrich_ip_profile(self, profile: IPProfile) -> IPProfile:
-        """Placeholder for IP profile enrichment."""
-        # This will be implemented in Sprint 3
-        return profile
+        """Enrich IP profile with semantic information."""
+        return self.semantic_enricher.enrich(profile)
 
     async def _analyze_ip_profile(
         self, profile: IPProfile, context: Optional[ContextProfile] = None

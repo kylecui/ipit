@@ -34,10 +34,11 @@ Typical outputs include:
 
 - **Sprint 0**: ✅ Project initialization - directory structure, requirements.txt, .env.example, basic config.py
 - **Sprint 1**: ✅ Core models and basic runtime framework - all Pydantic models, service/query engine skeletons, unit tests
+- **Sprint 2**: ✅ External intelligence collectors MVP - base collector class, AbuseIPDB/OTX/GreyNoise/RDAP/Reverse DNS collectors, concurrent aggregation
 
 ### Current Sprint
 
-Working on Sprint 2: External intelligence collectors MVP
+Working on Sprint 3: Standardization and semantic recognition
 
 ### MVP Target
 
