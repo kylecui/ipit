@@ -33,10 +33,11 @@ Typical outputs include:
 ### Completed Sprints
 
 - **Sprint 0**: ✅ Project initialization - directory structure, requirements.txt, .env.example, basic config.py
+- **Sprint 1**: ✅ Core models and basic runtime framework - all Pydantic models, service/query engine skeletons, unit tests
 
 ### Current Sprint
 
-Working on Sprint 1: Core models and basic runtime framework
+Working on Sprint 2: External intelligence collectors MVP
 
 ### MVP Target
 
