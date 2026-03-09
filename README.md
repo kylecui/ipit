@@ -28,7 +28,21 @@ Typical outputs include:
 
 ---
 
-## 2. Key Features
+## Development Status
+
+### Completed Sprints
+
+- **Sprint 0**: ✅ Project initialization - directory structure, requirements.txt, .env.example, basic config.py
+
+### Current Sprint
+
+Working on Sprint 1: Core models and basic runtime framework
+
+### MVP Target
+
+Sprint 0-5 completion for MVP with IP analysis, multi-source collectors, semantic enrichment, reputation scoring, and CLI/API interfaces.
+
+---
 
 ### 2.1 Multi-source threat intelligence collection
 Supported sources in MVP:
