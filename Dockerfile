@@ -38,6 +38,8 @@ COPY cache/ ./cache/
 COPY rules/ ./rules/
 COPY templates/ ./templates/
 COPY adapters/ ./adapters/
+COPY enrichers/ ./enrichers/
+COPY graph/ ./graph/
 
 # Create directories for runtime data
 RUN mkdir -p /app/data && chown -R tire:tire /app
