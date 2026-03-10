@@ -11,6 +11,10 @@ from .otx import OTXCollector
 from .greynoise import GreyNoiseCollector
 from .rdap import RDAPCollector
 from .reverse_dns import ReverseDNSCollector
+from .virustotal import VirusTotalCollector
+from .shodan import ShodanCollector
+from .honeynet import HoneynetCollector
+from .internal_flow import InternalFlowCollector
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +33,10 @@ class CollectorAggregator:
             GreyNoiseCollector(),
             RDAPCollector(),
             ReverseDNSCollector(),
+            VirusTotalCollector(),
+            ShodanCollector(),
+            HoneynetCollector(),
+            InternalFlowCollector(),
         ]
         return collectors
 

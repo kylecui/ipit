@@ -6,7 +6,7 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 import yaml
-from ..models import IPProfile
+from models import IPProfile
 
 logger = logging.getLogger(__name__)
 

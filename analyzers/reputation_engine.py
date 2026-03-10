@@ -3,14 +3,31 @@ Reputation engine for analyzing threat intelligence data.
 """
 
 import logging
-from typing import List, Tuple
-from ..models import IPProfile, EvidenceItem
+import yaml
+import os
+from typing import List, Tuple, Dict, Any
+from models import IPProfile, EvidenceItem
 
 logger = logging.getLogger(__name__)
 
 
 class ReputationEngine:
     """Analyzes IP reputation from collected threat intelligence."""
+
+    def __init__(self):
+        self.scoring_rules = self._load_scoring_rules()
+
+    def _load_scoring_rules(self) -> Dict[str, Any]:
+        """Load scoring rules from YAML file."""
+        rules_path = os.path.join(
+            os.path.dirname(__file__), "..", "rules", "scoring_rules.yaml"
+        )
+        try:
+            with open(rules_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load scoring rules: {e}")
+            return {}
 
     def analyze(self, profile: IPProfile) -> Tuple[int, List[EvidenceItem]]:
         """
@@ -28,24 +45,24 @@ class ReputationEngine:
         # Analyze each source
         sources = profile.sources or {}
 
-        # AbuseIPDB analysis
-        if "abuseipdb" in sources and sources["abuseipdb"]["ok"]:
-            score_delta, abuse_evidence = self._analyze_abuseipdb(
-                sources["abuseipdb"]["data"]
+        # Apply source-specific rules
+        if "abuseipdb" in self.scoring_rules.get("sources", {}):
+            score_delta, abuse_evidence = self._analyze_source(
+                sources.get("abuseipdb", {}), "abuseipdb"
             )
             score += score_delta
             evidence.extend(abuse_evidence)
 
-        # OTX analysis
-        if "otx" in sources and sources["otx"]["ok"]:
-            score_delta, otx_evidence = self._analyze_otx(sources["otx"]["data"])
+        if "otx" in self.scoring_rules.get("sources", {}):
+            score_delta, otx_evidence = self._analyze_source(
+                sources.get("otx", {}), "otx"
+            )
             score += score_delta
             evidence.extend(otx_evidence)
 
-        # GreyNoise analysis
-        if "greynoise" in sources and sources["greynoise"]["ok"]:
-            score_delta, gn_evidence = self._analyze_greynoise(
-                sources["greynoise"]["data"]
+        if "greynoise" in self.scoring_rules.get("sources", {}):
+            score_delta, gn_evidence = self._analyze_source(
+                sources.get("greynoise", {}), "greynoise"
             )
             score += score_delta
             evidence.extend(gn_evidence)
@@ -63,118 +80,91 @@ class ReputationEngine:
 
         return score, evidence
 
-    def _analyze_abuseipdb(self, data: dict) -> Tuple[int, List[EvidenceItem]]:
-        """Analyze AbuseIPDB data."""
+    def _analyze_source(
+        self, source_data: Dict[str, Any], source_name: str
+    ) -> Tuple[int, List[EvidenceItem]]:
+        """Analyze a specific source using rules."""
         score = 0
         evidence = []
 
-        confidence = data.get("abuse_confidence_score", 0)
+        if not source_data.get("ok", False):
+            return score, evidence
 
-        if confidence >= 90:
-            score += 30
-            evidence.append(
-                EvidenceItem(
-                    source="abuseipdb",
-                    category="reputation",
-                    severity="high",
-                    title="High abuse confidence",
-                    detail=f"AbuseIPDB confidence score: {confidence}%",
-                    score_delta=30,
-                    confidence=confidence / 100.0,
+        data = source_data.get("data", {})
+        source_rules = (
+            self.scoring_rules.get("sources", {}).get(source_name, {}).get("rules", [])
+        )
+
+        for rule in source_rules:
+            if self._evaluate_condition(rule.get("condition", ""), data):
+                score_delta = self._calculate_score_delta(
+                    rule.get("score_delta", 0), data
                 )
-            )
-        elif confidence >= 70:
-            score += 20
-            evidence.append(
-                EvidenceItem(
-                    source="abuseipdb",
-                    category="reputation",
-                    severity="medium",
-                    title="Moderate abuse confidence",
-                    detail=f"AbuseIPDB confidence score: {confidence}%",
-                    score_delta=20,
-                    confidence=confidence / 100.0,
+                evidence.append(
+                    EvidenceItem(
+                        source=source_name,
+                        category="reputation",
+                        severity=rule.get("severity", "low"),
+                        title=rule.get("title", ""),
+                        detail=self._format_detail(
+                            rule.get("detail_template", ""), data
+                        ),
+                        score_delta=score_delta,
+                        confidence=self._calculate_confidence(data),
+                    )
                 )
-            )
-        elif confidence > 0:
-            score += 5  # Small positive for any reports
-            evidence.append(
-                EvidenceItem(
-                    source="abuseipdb",
-                    category="reputation",
-                    severity="low",
-                    title="Low abuse confidence",
-                    detail=f"AbuseIPDB confidence score: {confidence}%",
-                    score_delta=5,
-                    confidence=confidence / 100.0,
-                )
-            )
+                score += score_delta
 
         return score, evidence
 
-    def _analyze_otx(self, data: dict) -> Tuple[int, List[EvidenceItem]]:
-        """Analyze OTX data."""
-        score = 0
-        evidence = []
+    def _evaluate_condition(self, condition: str, data: Dict[str, Any]) -> bool:
+        """Evaluate a condition string against data."""
+        try:
+            # Simple evaluation for now - in production, use a safer expression evaluator
+            safe_locals = {
+                k: v for k, v in data.items() if isinstance(v, (int, float, str, bool))
+            }
+            return eval(condition, {"__builtins__": {}}, safe_locals)
+        except Exception:
+            return False
 
-        pulse_count = data.get("pulse_count", 0)
-        reputation = data.get("reputation", 0)
-
-        if pulse_count > 0:
-            # OTX pulses indicate malicious activity
-            delta = min(20, pulse_count * 2)  # Cap at 20
-            score += delta
-            evidence.append(
-                EvidenceItem(
-                    source="otx",
-                    category="reputation",
-                    severity="medium",
-                    title="OTX pulse activity",
-                    detail=f"Found in {pulse_count} OTX pulses",
-                    score_delta=delta,
-                    confidence=min(0.8, pulse_count / 10.0),
+    def _calculate_score_delta(self, delta_expr: Any, data: Dict[str, Any]) -> int:
+        """Calculate score delta, handling expressions."""
+        if isinstance(delta_expr, str):
+            try:
+                safe_locals = {
+                    k: v
+                    for k, v in data.items()
+                    if isinstance(v, (int, float, str, bool))
+                }
+                return int(
+                    eval(
+                        delta_expr,
+                        {"__builtins__": {"min": min, "max": max}},
+                        safe_locals,
+                    )
                 )
-            )
+            except Exception:
+                return 0
+        elif isinstance(delta_expr, int):
+            return delta_expr
+        return 0
 
-        return score, evidence
+    def _format_detail(self, template: str, data: Dict[str, Any]) -> str:
+        """Format detail string with data."""
+        try:
+            return template.format(**data)
+        except Exception:
+            return template
 
-    def _analyze_greynoise(self, data: dict) -> Tuple[int, List[EvidenceItem]]:
-        """Analyze GreyNoise data."""
-        score = 0
-        evidence = []
-
-        classification = data.get("classification", "").lower()
-        noise = data.get("noise", False)
-        riot = data.get("riot", False)
-
-        if classification == "malicious":
-            score += 20
-            evidence.append(
-                EvidenceItem(
-                    source="greynoise",
-                    category="reputation",
-                    severity="high",
-                    title="GreyNoise malicious classification",
-                    detail="IP classified as malicious by GreyNoise",
-                    score_delta=20,
-                    confidence=0.9,
-                )
-            )
-        elif noise or riot:
-            score -= 15  # Reduce score for benign noise/riot
-            evidence.append(
-                EvidenceItem(
-                    source="greynoise",
-                    category="reputation",
-                    severity="low",
-                    title="GreyNoise benign activity",
-                    detail=f"IP classified as {'noise' if noise else 'riot'} - benign background activity",
-                    score_delta=-15,
-                    confidence=0.8,
-                )
-            )
-
-        return score, evidence
+    def _calculate_confidence(self, data: Dict[str, Any]) -> float:
+        """Calculate confidence based on data."""
+        # Simple heuristic - can be enhanced
+        if "confidence" in data:
+            return min(1.0, data["confidence"] / 100.0)
+        elif "abuse_confidence_score" in data:
+            return min(1.0, data["abuse_confidence_score"] / 100.0)
+        return 0.5
 
     def _apply_semantic_adjustments(
         self, tags: List[str]
@@ -183,25 +173,20 @@ class ReputationEngine:
         score = 0
         evidence = []
 
-        adjustments = {
-            "cloud_provider": -15,
-            "microsoft_service": -25,
-            "google_service": -25,
-            "official_service": -25,
-            "shared_infrastructure": -10,
-        }
+        adjustments = self.scoring_rules.get("semantic_adjustments", {})
 
         for tag in tags:
             if tag in adjustments:
-                delta = adjustments[tag]
+                rule = adjustments[tag]
+                delta = rule.get("score_delta", 0)
                 score += delta
                 evidence.append(
                     EvidenceItem(
                         source="semantic",
                         category="adjustment",
-                        severity="low",
-                        title=f"Semantic adjustment: {tag}",
-                        detail=f"IP identified as {tag.replace('_', ' ')}, reducing suspicion",
+                        severity=rule.get("severity", "low"),
+                        title=rule.get("title", ""),
+                        detail=rule.get("detail_template", "").replace("_", " "),
                         score_delta=delta,
                         confidence=0.9,
                     )

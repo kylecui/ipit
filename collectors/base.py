@@ -7,7 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 from httpx import AsyncClient, Timeout
-from ..app.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

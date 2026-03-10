@@ -6,10 +6,11 @@ import asyncio
 from typing import Optional
 from pathlib import Path
 import typer
-from .service import ThreatIntelService
-from ..reporters.json_reporter import JSONReporter
-from ..reporters.markdown_reporter import MarkdownReporter
-from ..reporters.cli_reporter import CLIReporter
+from app.service import ThreatIntelService
+from adapters.csv_adapter import CSVAdapter
+from reporters.json_reporter import JSONReporter
+from reporters.markdown_reporter import MarkdownReporter
+from reporters.cli_reporter import CLIReporter
 
 app = typer.Typer(help="Threat Intelligence Reasoning Engine CLI")
 service = ThreatIntelService()
@@ -19,9 +20,10 @@ service = ThreatIntelService()
 def lookup(
     ip: str = typer.Argument(..., help="IP address to lookup"),
     format: str = typer.Option("cli", help="Output format: cli, json, md"),
+    refresh: bool = typer.Option(False, help="Skip cache and refresh data"),
 ):
     """Quick lookup of an IP address."""
-    verdict = asyncio.run(service.analyze_ip(ip))
+    verdict = asyncio.run(service.analyze_ip(ip, refresh=refresh))
 
     if format == "json":
         reporter = JSONReporter()
@@ -42,9 +44,10 @@ def report(
     ip: str = typer.Argument(..., help="IP address to analyze"),
     format: str = typer.Option("md", help="Output format: json, md"),
     output: Optional[Path] = typer.Option(None, help="Output file path"),
+    refresh: bool = typer.Option(False, help="Skip cache and refresh data"),
 ):
     """Generate detailed report for an IP address."""
-    verdict = asyncio.run(service.analyze_ip(ip))
+    verdict = asyncio.run(service.analyze_ip(ip, refresh=refresh))
 
     if format == "json":
         reporter = JSONReporter()
@@ -73,12 +76,28 @@ def analyze(
     hostname: Optional[str] = typer.Option(None, help="Associated hostname"),
     protocol: Optional[str] = typer.Option(None, help="Protocol (tcp/udp)"),
     process_name: Optional[str] = typer.Option(None, help="Process name"),
+    host_role: Optional[str] = typer.Option(
+        None, help="Host role (workstation/server)"
+    ),
     format: str = typer.Option("cli", help="Output format: cli, json, md"),
+    refresh: bool = typer.Option(False, help="Skip cache and refresh data"),
 ):
     """Context-aware analysis with additional behavioral context."""
-    # For now, context is not implemented, so this is same as lookup
-    typer.echo("Context-aware analysis not yet implemented. Performing basic lookup...")
-    verdict = asyncio.run(service.analyze_ip(ip))
+    from models import ContextProfile
+
+    # Build context if any parameters provided
+    context = None
+    if any([port, direction, hostname, protocol, process_name, host_role]):
+        context = ContextProfile(
+            direction=direction,
+            protocol=protocol,
+            port=port,
+            hostname=hostname,
+            process_name=process_name,
+            host_role=host_role,
+        )
+
+    verdict = asyncio.run(service.analyze_ip(ip, context, refresh=refresh))
 
     if format == "json":
         reporter = JSONReporter()
@@ -99,10 +118,41 @@ def batch(
     input_file: Path = typer.Argument(..., help="Input CSV file with observables"),
     format: str = typer.Option("json", help="Output format: json, md"),
     output: Optional[Path] = typer.Option(None, help="Output file path"),
+    refresh: bool = typer.Option(False, help="Skip cache and refresh data"),
 ):
     """Batch analysis of multiple observables."""
-    typer.echo("Batch analysis not yet implemented", err=True)
-    raise typer.Exit(1)
+    csv_adapter = CSVAdapter(service)
+
+    results = asyncio.run(
+        csv_adapter.process_batch(input_file, output, refresh=refresh)
+    )
+
+    if not output:
+        # Print summary to console
+        successful = sum(1 for r in results if r["success"])
+        total = len(results)
+        typer.echo(f"Processed {total} observables, {successful} successful")
+
+        if format == "json":
+            import json
+
+            typer.echo(json.dumps(results, indent=2))
+        else:
+            # Simple markdown summary
+            typer.echo("# Batch Analysis Results")
+            typer.echo(f"Total: {total}, Successful: {successful}")
+            for result in results:
+                if result["success"] and result["verdict"]:
+                    v = result["verdict"]
+                    typer.echo(
+                        f"- {result['type']}:{result['value']} - {v.get('level', 'Unknown')} ({v.get('final_score', 0)})"
+                    )
+                else:
+                    typer.echo(
+                        f"- {result['type']}:{result['value']} - ERROR: {result.get('error', 'Unknown')}"
+                    )
+    else:
+        typer.echo(f"Results saved to {output}")
 
 
 if __name__ == "__main__":

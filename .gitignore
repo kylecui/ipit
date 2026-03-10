@@ -1,0 +1,5 @@
+collectors/__pycache__/
+*.pyc
+__pycache__/
+.env
+.ruff_cache/

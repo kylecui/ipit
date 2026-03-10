@@ -5,7 +5,7 @@ AbuseIPDB collector for threat intelligence.
 import logging
 from typing import Dict, Any
 from .base import BaseCollector
-from ..app.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

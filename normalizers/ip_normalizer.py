@@ -5,7 +5,7 @@ IP profile normalizer for standardizing collected data.
 import logging
 from datetime import datetime
 from typing import Dict, Any
-from ..models import IPProfile
+from models import IPProfile
 
 logger = logging.getLogger(__name__)
 

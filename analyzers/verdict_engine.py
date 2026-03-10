@@ -3,8 +3,10 @@ Verdict engine for final risk assessment and decision making.
 """
 
 import logging
-from typing import List
-from ..models import Verdict, EvidenceItem
+import yaml
+import os
+from typing import List, Dict, Any
+from models import Verdict, EvidenceItem
 
 logger = logging.getLogger(__name__)
 
@@ -12,22 +14,42 @@ logger = logging.getLogger(__name__)
 class VerdictEngine:
     """Generates final verdicts from analysis results."""
 
-    # Score thresholds for verdict levels
-    SCORE_THRESHOLDS = {
-        "Low": (0, 20),
-        "Medium": (21, 45),
-        "High": (46, 75),
-        "Critical": (76, 100),
-    }
+    def __init__(self):
+        self.action_rules = self._load_action_rules()
 
-    # Decision mappings
-    DECISIONS = {
-        "Low": "allow_with_monitoring",
-        "Medium": "investigate",
-        "High": "alert_and_review",
-        "Critical": "contain_or_block",
-        "Inconclusive": "collect_more_context",
-    }
+    def _load_action_rules(self) -> Dict[str, Any]:
+        """Load action rules from YAML file."""
+        rules_path = os.path.join(
+            os.path.dirname(__file__), "..", "rules", "action_rules.yaml"
+        )
+        try:
+            with open(rules_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load action rules: {e}")
+            # Fallback defaults
+            return {
+                "score_thresholds": {
+                    "Low": [0, 20],
+                    "Medium": [21, 45],
+                    "High": [46, 75],
+                    "Critical": [76, 100],
+                },
+                "decisions": {
+                    "Low": "allow_with_monitoring",
+                    "Medium": "investigate",
+                    "High": "alert_and_review",
+                    "Critical": "contain_or_block",
+                    "Inconclusive": "collect_more_context",
+                },
+                "summaries": {
+                    "Low": "{object_type} {object_value} shows minimal threat indicators. Final score: {final_score}/100. Safe for normal operations with monitoring.",
+                    "Medium": "{object_type} {object_value} has moderate threat indicators. Final score: {final_score}/100. Recommend investigation before allowing.",
+                    "High": "{object_type} {object_value} shows significant malicious activity. Final score: {final_score}/100. Alert and review required.",
+                    "Critical": "{object_type} {object_value} shows critical threat indicators. Final score: {final_score}/100. Immediate containment recommended.",
+                    "Inconclusive": "{object_type} {object_value} has conflicting evidence. Final score: {final_score}/100. More context needed for accurate assessment.",
+                },
+            }
 
     def generate_verdict(
         self,
@@ -60,7 +82,7 @@ class VerdictEngine:
         level = self._determine_level(final_score, evidence)
 
         # Get decision
-        decision = self.DECISIONS.get(level, "investigate")
+        decision = self.action_rules.get("decisions", {}).get(level, "investigate")
 
         # Calculate confidence
         confidence = self._calculate_confidence(evidence, final_score)
@@ -91,7 +113,8 @@ class VerdictEngine:
             return "Inconclusive"
 
         # Determine level by score
-        for level, (min_score, max_score) in self.SCORE_THRESHOLDS.items():
+        thresholds = self.action_rules.get("score_thresholds", {})
+        for level, (min_score, max_score) in thresholds.items():
             if min_score <= final_score <= max_score:
                 return level
 
@@ -142,21 +165,13 @@ class VerdictEngine:
         evidence: List[EvidenceItem],
     ) -> str:
         """Generate human-readable summary."""
-        summaries = {
-            "Low": f"{object_type.upper()} {object_value} shows minimal threat indicators. "
-            f"Final score: {final_score}/100. Safe for normal operations with monitoring.",
-            "Medium": f"{object_type.upper()} {object_value} has moderate threat indicators. "
-            f"Final score: {final_score}/100. Recommend investigation before allowing.",
-            "High": f"{object_type.upper()} {object_value} shows significant malicious activity. "
-            f"Final score: {final_score}/100. Alert and review required.",
-            "Critical": f"{object_type.upper()} {object_value} shows critical threat indicators. "
-            f"Final score: {final_score}/100. Immediate containment recommended.",
-            "Inconclusive": f"{object_type.upper()} {object_value} has conflicting evidence. "
-            f"Final score: {final_score}/100. More context needed for accurate assessment.",
-        }
-
-        return summaries.get(
+        summary_template = self.action_rules.get("summaries", {}).get(
             level,
-            f"Analysis complete for {object_type} {object_value}. "
-            f"Verdict: {level}, Score: {final_score}/100.",
+            f"Analysis complete for {object_type} {object_value}. Verdict: {level}, Score: {final_score}/100.",
+        )
+
+        return summary_template.format(
+            object_type=object_type.upper(),
+            object_value=object_value,
+            final_score=final_score,
         )

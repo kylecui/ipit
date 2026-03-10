@@ -3,7 +3,7 @@ Semantic enricher that coordinates multiple enrichment processes.
 """
 
 import logging
-from ..models import IPProfile
+from models import IPProfile
 from .service_catalog_enricher import ServiceCatalogEnricher
 
 logger = logging.getLogger(__name__)

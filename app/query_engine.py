@@ -3,16 +3,15 @@ Query orchestration engine for threat intelligence analysis.
 """
 
 from typing import Dict, Any, Optional
-from ..models import Observable, ContextProfile, IPProfile, Verdict
-from ..normalizers.ip_normalizer import IPNormalizer
-from ..enrichers.semantic_enricher import SemanticEnricher
-from ..analyzers.reputation_engine import ReputationEngine
-from ..analyzers.verdict_engine import VerdictEngine
-from ..collectors import CollectorAggregator
-
-
-class QueryEngine:
-    """Orchestrates the threat intelligence analysis pipeline."""
+from models import Observable, ContextProfile, IPProfile, Verdict
+from normalizers.ip_normalizer import IPNormalizer
+from enrichers.semantic_enricher import SemanticEnricher
+from analyzers.reputation_engine import ReputationEngine
+from analyzers.verdict_engine import VerdictEngine
+from analyzers.contextual_risk_engine import ContextualRiskEngine
+from analyzers.noise_engine import NoiseEngine
+from collectors import CollectorAggregator
+from cache.cache_store import CacheStore
 
 
 class QueryEngine:
@@ -25,9 +24,15 @@ class QueryEngine:
         self.reputation_engine = ReputationEngine()
         self.verdict_engine = VerdictEngine()
         self.collector_aggregator = CollectorAggregator()
+        self.cache = CacheStore()
+        self.contextual_risk_engine = ContextualRiskEngine()
+        self.noise_engine = NoiseEngine()
 
     async def analyze(
-        self, observable: Observable, context: Optional[ContextProfile] = None
+        self,
+        observable: Observable,
+        context: Optional[ContextProfile] = None,
+        refresh: bool = False,
     ) -> Verdict:
         """
         Main analysis pipeline.
@@ -43,9 +48,11 @@ class QueryEngine:
 
         if observable.type == "ip":
             # Placeholder for IP analysis pipeline
-            profile = await self._collect_ip_data(observable.value)
+            profile = await self._collect_ip_data(observable.value, refresh=refresh)
             enriched_profile = await self._enrich_ip_profile(profile)
-            verdict = await self._analyze_ip_profile(enriched_profile, context)
+            verdict = await self._analyze_ip_profile(
+                enriched_profile, context, refresh=refresh
+            )
             return verdict
 
         elif observable.type == "domain":
@@ -83,10 +90,26 @@ class QueryEngine:
         else:
             raise ValueError(f"Unsupported observable type: {observable.type}")
 
-    async def _collect_ip_data(self, ip: str) -> IPProfile:
+    async def _collect_ip_data(self, ip: str, refresh: bool = False) -> IPProfile:
         """Collect IP data from all sources."""
+        # Check cache first unless refresh is requested
+        if not refresh:
+            cached_profile = self.cache.get_normalized_profile(ip)
+            if cached_profile:
+                return cached_profile
+
+        # Collect raw data
         collected_data = await self.collector_aggregator.collect_all(ip)
+
+        # Cache raw results
+        self.cache.set_collector_results(ip, collected_data)
+
+        # Normalize
         profile = self.ip_normalizer.normalize(ip, collected_data)
+
+        # Cache normalized profile
+        self.cache.set_normalized_profile(ip, profile)
+
         return profile
 
     async def _enrich_ip_profile(self, profile: IPProfile) -> IPProfile:
@@ -94,14 +117,34 @@ class QueryEngine:
         return self.semantic_enricher.enrich(profile)
 
     async def _analyze_ip_profile(
-        self, profile: IPProfile, context: Optional[ContextProfile] = None
+        self,
+        profile: IPProfile,
+        context: Optional[ContextProfile] = None,
+        refresh: bool = False,
     ) -> Verdict:
         """Analyze IP profile for threats."""
-        # Get reputation score and evidence
-        reputation_score, evidence = self.reputation_engine.analyze(profile)
+        # Check cache first unless refresh
+        if not refresh:
+            cached_verdict = self.cache.get_verdict(profile.ip)
+            if cached_verdict:
+                return cached_verdict
 
-        # For now, contextual score is 0 (will be implemented in later sprints)
-        contextual_score = 0
+        # Get reputation score and evidence
+        reputation_score, reputation_evidence = self.reputation_engine.analyze(profile)
+
+        # Get contextual score and evidence
+        contextual_adjustment, contextual_evidence = (
+            self.contextual_risk_engine.analyze(profile, context)
+        )
+        contextual_score = contextual_adjustment
+
+        # Get noise analysis
+        noise_score, noise_classification, noise_evidence = self.noise_engine.analyze(
+            profile
+        )
+
+        # Combine evidence
+        all_evidence = reputation_evidence + contextual_evidence + noise_evidence
 
         # Generate verdict
         verdict = self.verdict_engine.generate_verdict(
@@ -109,8 +152,11 @@ class QueryEngine:
             object_value=profile.ip,
             reputation_score=reputation_score,
             contextual_score=contextual_score,
-            evidence=evidence,
+            evidence=all_evidence,
             tags=profile.tags,
         )
+
+        # Cache verdict
+        self.cache.set_verdict(profile.ip, verdict)
 
         return verdict

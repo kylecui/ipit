@@ -4,7 +4,7 @@ Markdown reporter for threat intelligence verdicts.
 
 import os
 from typing import List
-from ..models import Verdict, EvidenceItem
+from models import Verdict, EvidenceItem
 
 
 class MarkdownReporter:

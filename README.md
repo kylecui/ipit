@@ -1,507 +1,253 @@
-# Threat Intelligence Reasoning Engine
+# Threat Intelligence Reasoning Engine (TIRE)
 
-A multi-source threat intelligence analysis and reasoning engine for IP / Domain / URL observables.
+一个多源威胁情报分析和推理引擎，用于IP/域名/URL可观测对象的分析。
 
-## 1. Project Overview
+## 🚀 快速开始
 
-Threat Intelligence Reasoning Engine (TIRE) is not a simple reputation checker.
-
-It is designed to:
-
-- collect threat intelligence from multiple external sources
-- normalize heterogeneous results into a unified profile
-- identify service semantics such as cloud provider / CDN / Microsoft / Google / email security / scanner infrastructure
-- reduce false positives caused by shared infrastructure, anycast, CDN, and major cloud services
-- optionally incorporate context such as port, direction, hostname, SNI, and process name
-- produce explainable verdicts instead of raw scores only
-
-Typical outputs include:
-
-- Low
-- Medium
-- High
-- Critical
-- Inconclusive
-- Benign Service
-- Internet Noise
-- Needs Context
-
----
-
-## Development Status
-
-### Completed Sprints
-
-- **Sprint 0**: ✅ Project initialization - directory structure, requirements.txt, .env.example, basic config.py
-- **Sprint 1**: ✅ Core models and basic runtime framework - all Pydantic models, service/query engine skeletons, unit tests
-- **Sprint 2**: ✅ External intelligence collectors MVP - base collector class, AbuseIPDB/OTX/GreyNoise/RDAP/Reverse DNS collectors, concurrent aggregation
-- **Sprint 3**: ✅ Standardization and semantic recognition - IPNormalizer, ServiceCatalogEnricher, SemanticEnricher
-- **Sprint 4**: ✅ Reputation/Verdict engines - ReputationEngine, VerdictEngine with evidence-based analysis
-- **Sprint 5**: ✅ CLI/API/Reporter MVP - JSON/Markdown/CLI reporters, Typer CLI, FastAPI API, full pipeline integration
-
-### MVP Status: ✅ COMPLETE
-
-All Sprint 0-5 completed. The system now provides:
-- IP analysis with multi-source intelligence collection
-- Semantic service identification and false-positive reduction  
-- Reputation scoring with explainable evidence
-- CLI/API interfaces with multiple output formats
-- End-to-end analysis pipeline from collection to verdict
-
----
-
-### 2.1 Multi-source threat intelligence collection
-Supported sources in MVP:
-
-- AbuseIPDB
-- AlienVault OTX
-- GreyNoise
-- RDAP
-- Reverse DNS
-
-Planned extensions:
-
-- VirusTotal
-- Shodan
-- Censys
-- Passive DNS
-- Internal telemetry
-- Honeynet data
-- Flow logs
-- EDR context
-
-### 2.2 Semantic service identification
-The engine identifies infrastructure types such as:
-
-- cloud provider
-- CDN
-- Microsoft service
-- Google service
-- email security service
-- internet scanner
-- shared infrastructure
-
-This is critical for false-positive reduction.
-
-### 2.3 Explainable verdicts
-The engine does not only return a score.  
-It also returns:
-
-- evidence items
-- score adjustments
-- semantic tags
-- conflict notes
-- recommended actions
-
-### 2.4 Context-aware analysis
-When context is available, the engine can adjust verdicts based on:
-
-- direction
-- port
-- protocol
-- hostname
-- SNI
-- process name
-- host role
-
----
-
-## 3. Architecture
-
-```text
-CLI / API / Batch
-        |
-        v
- Query Orchestration
-        |
-        v
-Collectors -> Normalizers -> Enrichers -> Analyzers -> Verdict -> Reporters
-````
-
-Main pipeline:
-
-1. Collect threat intelligence
-2. Normalize to standard profile
-3. Enrich with semantic tags
-4. Analyze reputation
-5. Optionally analyze context
-6. Resolve conflicts
-7. Produce verdict
-8. Generate report
-
----
-
-## 4. Project Structure
-
-```text
-threat-intel-reasoning-engine/
-├── app/
-│   ├── main.py
-│   ├── api.py
-│   ├── config.py
-│   ├── query_engine.py
-│   └── service.py
-├── models/
-│   ├── observable.py
-│   ├── ip_profile.py
-│   ├── domain_profile.py
-│   ├── context_profile.py
-│   ├── evidence.py
-│   └── verdict.py
-├── collectors/
-│   ├── base.py
-│   ├── abuseipdb.py
-│   ├── otx.py
-│   ├── greynoise.py
-│   ├── rdap.py
-│   ├── reverse_dns.py
-│   ├── virustotal.py
-│   └── shodan.py
-├── normalizers/
-│   ├── ip_normalizer.py
-│   └── domain_normalizer.py
-├── enrichers/
-│   ├── semantic_enricher.py
-│   ├── service_catalog_enricher.py
-│   ├── noise_enricher.py
-│   └── relationship_enricher.py
-├── analyzers/
-│   ├── reputation_engine.py
-│   ├── semantic_risk_engine.py
-│   ├── noise_engine.py
-│   ├── contextual_risk_engine.py
-│   ├── conflict_resolver.py
-│   └── verdict_engine.py
-├── graph/
-│   ├── entity_graph.py
-│   └── correlator.py
-├── rules/
-│   ├── service_catalog.yaml
-│   ├── scoring_rules.yaml
-│   ├── noise_rules.yaml
-│   └── action_rules.yaml
-├── reporters/
-│   ├── json_reporter.py
-│   ├── markdown_reporter.py
-│   ├── html_reporter.py
-│   └── cli_reporter.py
-├── adapters/
-│   ├── siem_adapter.py
-│   ├── soar_adapter.py
-│   └── csv_adapter.py
-├── cache/
-│   ├── cache_store.py
-│   └── ttl_cache.py
-├── storage/
-│   ├── sqlite_store.py
-│   └── file_store.py
-├── templates/
-│   ├── report.md.j2
-│   └── report.html.j2
-├── tests/
-├── docs/
-├── requirements.txt
-├── README.md
-└── .env.example
-```
-
----
-
-## 5. Installation
-
-### 5.1 Create virtual environment
+### 1. 安装
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+# 克隆仓库
+git clone <repository-url>
+cd threat-intel-reasoning-engine
+
+# 创建虚拟环境（推荐使用uv）
+uv venv
+source .venv/bin/activate  # 或在Windows: .venv\Scripts\activate
+
+# 安装依赖
+uv pip install -r requirements.txt
 ```
 
-On Windows PowerShell:
+### 2. 配置
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-### 5.2 Install dependencies
+复制环境文件并设置API密钥：
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
+# 编辑 .env 文件，添加您的API密钥（可选，但推荐）
 ```
 
----
+### 3. 运行
 
-## 6. Configuration
+#### CLI 快速测试
+```bash
+uv run python -m app.main lookup 8.8.8.8
+```
 
-Create a `.env` file based on `.env.example`.
+#### 启动Web界面
+```bash
+uv run uvicorn app.api:app --reload
+# 访问 http://127.0.0.1:8000/
+```
 
-Example:
+#### 启动API服务器
+```bash
+uv run uvicorn app.api:app --reload
+# API文档: http://127.0.0.1:8000/docs
+```
+
+## 📋 工具能力
+
+TIRE 不是简单的声誉检查器，它提供：
+
+- **多源情报收集**：整合9个外部威胁情报源（AbuseIPDB、OTX、GreyNoise、VirusTotal等）
+- **语义服务识别**：识别云服务、CDN、Microsoft/Google服务等，减少误报
+- **上下文感知分析**：考虑端口、方向、主机名、进程等上下文信息
+- **可解释的判决**：提供证据、分数调整、语义标签和建议行动
+- **多层分析**：声誉、噪音、上下文、内部遥测分析
+- **多种输出格式**：CLI、JSON、Markdown、HTML、Web界面
+- **批量处理**：支持CSV批量分析
+- **缓存机制**：SQLite缓存提升性能
+- **规则外部化**：YAML配置文件驱动的评分和行动规则
+
+典型输出判决：
+- Low / Medium / High / Critical
+- Benign Service / Internet Noise / Needs Context / Inconclusive
+
+## 🎯 使用方法
+
+### CLI 使用
+
+#### 基本IP查询
+```bash
+uv run python -m app.main lookup 8.8.8.8
+```
+
+#### 生成报告
+```bash
+# Markdown格式
+uv run python -m app.main report 8.8.8.8 --format md --output report.md
+
+# JSON格式
+uv run python -m app.main report 8.8.8.8 --format json
+```
+
+#### 上下文感知分析
+```bash
+uv run python -m app.main analyze 8.8.8.8 \
+  --direction outbound \
+  --port 443 \
+  --hostname example.com \
+  --process chrome.exe
+```
+
+#### 批量分析
+```bash
+uv run python -m app.main batch observables.csv --format json --output results.json
+```
+
+### API 使用
+
+#### 健康检查
+```bash
+curl http://localhost:8000/healthz
+```
+
+#### IP分析
+```bash
+curl http://localhost:8000/api/v1/ip/8.8.8.8
+```
+
+#### 上下文分析
+```bash
+curl -X POST http://localhost:8000/api/v1/analyze/ip \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ip": "8.8.8.8",
+    "context": {
+      "direction": "outbound",
+      "port": 53,
+      "protocol": "udp"
+    }
+  }'
+```
+
+### Web界面使用
+
+1. 启动服务器：`uv run uvicorn app.api:app --reload`
+2. 打开浏览器访问 `http://127.0.0.1:8000/`
+3. 输入IP地址，点击"Analyze IP"
+4. 查看Bootstrap样式的分析结果
+
+## 📊 示例输出
+
+### CLI 输出示例
+```
+Threat Intelligence Analysis for 8.8.8.8
+======================================
+
+Verdict: Low
+Summary: Google Public DNS - Known benign infrastructure
+Confidence: 95.0%
+
+Evidence:
+✓ Google service identified via reverse DNS (dns.google)
+✓ Low reputation score from multiple sources
+✓ No malicious activity detected
+
+Recommended Action: Allow - Benign infrastructure
+```
+
+### API 响应示例
+```json
+{
+  "object_type": "ip",
+  "object_value": "8.8.8.8",
+  "level": "Low",
+  "summary": "Google Public DNS - Known benign infrastructure",
+  "confidence": 0.95,
+  "final_score": 15,
+  "tags": ["cloud_provider", "google_service", "dns"],
+  "decision": "allow",
+  "evidence": [...]
+}
+```
+
+## ⚙️ 高级配置
+
+### 环境变量
 
 ```env
-ABUSEIPDB_API_KEY=
-OTX_API_KEY=
-GREYNOISE_API_KEY=
-VT_API_KEY=
-SHODAN_API_KEY=
+# API密钥（可选）
+ABUSEIPDB_API_KEY=your_key_here
+OTX_API_KEY=your_key_here
+GREYNOISE_API_KEY=your_key_here
+VT_API_KEY=your_key_here
+SHODAN_API_KEY=your_key_here
 
+# 性能设置
 CACHE_TTL_HOURS=24
 HTTP_TIMEOUT_SECONDS=15
 MAX_RETRIES=2
 LOG_LEVEL=INFO
 ```
 
-Notes:
+### 自定义规则
 
-* The application must still work even if some API keys are missing
-* Missing collectors should degrade gracefully
-* No API key should ever be printed in logs
+编辑 `rules/` 目录下的YAML文件来自定义：
+- `scoring_rules.yaml`: 评分规则
+- `action_rules.yaml`: 行动规则
+- `service_catalog.yaml`: 服务目录
 
----
+## 🧪 测试
 
-## 7. Running the CLI
-
-### 7.1 Basic IP lookup
-
+运行测试套件：
 ```bash
-python -m app.main lookup ip 8.8.8.8
+uv run pytest
 ```
 
-### 7.2 Generate Markdown report
+推荐测试类别：
+- 模型验证
+- 收集器解析
+- 标准化输出
+- 语义标签
+- 声誉评分
+- 判决生成
+- API端点测试
 
-```bash
-python -m app.main report ip 52.123.129.14 --format md
+## 🏗️ 架构概览
+
+```
+输入层 (CLI/API/Web/Batch)
+    ↓
+查询编排 (QueryEngine)
+    ↓
+收集器 → 标准化器 → 丰富器 → 分析器 → 判决 → 报告器
+    ↑           ↑          ↑         ↑        ↑       ↑
+外部源    IP/域名规范  语义标签   多层分析  证据融合  多格式输出
 ```
 
-### 7.3 Generate JSON report
-
-```bash
-python -m app.main report ip 52.123.129.14 --format json
-```
-
-### 7.4 Context-aware analysis
-
-```bash
-python -m app.main analyze ip 52.123.129.14 --direction outbound --port 443 --hostname ecs.office.com --process MsMpEng.exe
-```
-
-### 7.5 Batch analysis
-
-```bash
-python -m app.main batch input.csv --format json
-```
-
----
-
-## 8. Running the API
-
-Start the API server:
-
-```bash
-uvicorn app.api:app --reload
-```
-
-OpenAPI docs:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### 8.1 Health check
-
-```http
-GET /healthz
-```
-
-### 8.2 IP analysis
-
-```http
-GET /api/v1/ip/8.8.8.8
-```
-
-### 8.3 Context-aware IP analysis
-
-```http
-POST /api/v1/analyze/ip
-Content-Type: application/json
-```
-
-Body example:
-
-```json
-{
-  "ip": "52.123.129.14",
-  "context": {
-    "direction": "outbound",
-    "protocol": "tcp",
-    "port": 443,
-    "hostname": "ecs.office.com",
-    "sni": "ecs.office.com",
-    "process_name": "MsMpEng.exe",
-    "host_role": "workstation"
-  }
-}
-```
-
----
-
-## 9. Design Rules
-
-The following engineering constraints are mandatory:
-
-1. Collectors must not implement final scoring logic
-2. All scoring must happen in analyzers
-3. All analyzers must emit evidence items
-4. Semantic tags should be driven by YAML rules when possible
-5. Query orchestration must tolerate partial collector failures
-6. Reporters must not contain business logic
-7. Context analysis must be optional
-8. Batch analysis must be item-fault-tolerant
-9. Sensitive configuration must never be printed
-10. The engine must allow inconclusive outputs
-
----
-
-## 10. Supported Verdict Types
-
-Primary verdict levels:
-
-* Low
-* Medium
-* High
-* Critical
-* Inconclusive
-
-Additional semantic decision states may include:
-
-* Benign Service
-* Internet Noise
-* Needs Context
-
----
-
-## 11. Example Expected Outcomes
-
-### Case 1: 8.8.8.8
-
-Expected:
-
-* organization: Google
-* tags: cloud_provider, google_service
-* verdict: Low
-
-### Case 2: 1.1.1.1
-
-Expected:
-
-* organization: Cloudflare
-* tags: cloud_provider, cdn
-* verdict: Low
-
-### Case 3: 52.123.129.14
-
-Expected:
-
-* organization: Microsoft
-* tags: cloud_provider, microsoft_service, shared_infrastructure
-* verdict: Low or Inconclusive-low depending on evidence mix
-
-### Case 4: Known malicious public IOC
-
-Expected:
-
-* high reputation score
-* High or Critical verdict
-
-### Case 5: GreyNoise benign scanner
-
-Expected:
-
-* noise tags
-* not automatically classified as critical malicious infrastructure
-
----
-
-## 12. Testing
-
-Run tests:
-
-```bash
-pytest -q
-```
-
-Recommended test categories:
-
-* model validation
-* collector parsing
-* normalizer output
-* semantic tagging
-* reputation scoring
-* verdict generation
-* API endpoint testing
-* CLI smoke tests
-* end-to-end mock pipeline tests
-
----
-
-## 13. MVP Definition of Done
-
-The MVP is considered complete when the following are implemented:
-
-* IP lookup
-* AbuseIPDB / OTX / GreyNoise / RDAP / Reverse DNS collectors
-* IPProfile normalization
-* service catalog enrichment
-* reputation engine
-* verdict engine
-* JSON / Markdown / CLI outputs
-* CLI commands
-* FastAPI endpoint
-* basic tests
-
----
-
-## 14. Roadmap
-
-### Phase 1
-
-* MVP collectors
-* semantic service identification
-* reputation engine
-* CLI / API / Markdown report
-
-### Phase 2
-
-* VirusTotal
-* Shodan
-* rule externalization
-* batch analysis
-* HTML reports
-
-### Phase 3
-
-* contextual risk engine
-* internal telemetry integration
-* honeynet input
-* conflict resolver
-
-### Phase 4
-
-* graph correlation
-* dashboard
-* SIEM/SOAR adapters
-* production observability
-
----
-
-## 15. License / Notes
-
-This project is intended for defensive security analysis, SOC triage, threat hunting support, and explainable threat intelligence reasoning.
-
-It should not be implemented as a single-source blacklist lookup tool.
-Its core value lies in:
-
-* multi-source intelligence fusion
-* semantic false-positive reduction
-* context-aware risk reasoning
-* explainable evidence-driven verdicts
+## 📚 设计原则
+
+1. **收集器不评分**：收集器仅收集数据，不进行最终评分
+2. **所有评分在分析器中**：评分逻辑集中在分析器组件
+3. **分析器发出证据**：所有分析器必须发出证据项
+4. **语义标签驱动**：尽可能使用YAML规则驱动语义标签
+5. **容错性**：查询编排必须容忍部分收集器失败
+6. **报告器无业务逻辑**：报告器仅负责呈现，不包含业务逻辑
+7. **上下文可选**：上下文分析必须是可选的
+8. **批量容错**：批量分析必须是项目级容错的
+9. **敏感配置不打印**：永远不要在日志中打印敏感配置
+10. **允许不确定输出**：引擎必须允许不确定的输出
+
+## 🔄 开发状态
+
+✅ 已完成 Sprint 0-11：
+- MVP核心功能（收集、标准化、分析、报告）
+- 高级功能（缓存、规则外部化、上下文分析、图相关性）
+- Web界面和仪表板
+
+🚧 进行中 Sprint 12：
+- 生产级强化（日志、指标、验证、限速）
+
+## 📝 许可证与注意事项
+
+本项目旨在防御性安全分析、SOC分流、威胁狩猎支持和可解释的威胁情报推理。
+
+它不应被实现为单源黑名单查找工具。其核心价值在于：
+- 多源情报融合
+- 语义误报减少
+- 上下文感知风险推理
+- 可解释的证据驱动判决
 

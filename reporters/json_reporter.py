@@ -4,7 +4,7 @@ JSON reporter for threat intelligence verdicts.
 
 import json
 from typing import Any, Dict
-from ..models import Verdict
+from models import Verdict
 
 
 class JSONReporter:

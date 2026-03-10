@@ -7,7 +7,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.panel import Panel
 from typing import List
-from ..models import Verdict, EvidenceItem
+from models import Verdict, EvidenceItem
 
 console = Console()
 
