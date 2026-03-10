@@ -37,6 +37,7 @@ COPY storage/ ./storage/
 COPY cache/ ./cache/
 COPY rules/ ./rules/
 COPY templates/ ./templates/
+COPY locales/ ./locales/
 COPY adapters/ ./adapters/
 COPY enrichers/ ./enrichers/
 COPY graph/ ./graph/
