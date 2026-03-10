@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
 
+    # Language
+    language: str = Field(default="en", env="LANGUAGE")
+
     class Config:
         env_file = ".env"
         case_sensitive = False

@@ -6,6 +6,7 @@ import os
 from typing import Dict, Any
 from jinja2 import Environment, FileSystemLoader
 from models import Verdict
+from app.i18n import i18n
 
 
 class HTMLReporter:
@@ -15,12 +16,13 @@ class HTMLReporter:
         template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
         self.env = Environment(loader=FileSystemLoader(template_dir))
 
-    def generate(self, verdict: Verdict) -> str:
+    def generate(self, verdict: Verdict, lang: str = "en") -> str:
         """
         Generate HTML report from verdict.
 
         Args:
             verdict: Analysis verdict
+            lang: Language code ("en" or "zh")
 
         Returns:
             HTML string
@@ -28,11 +30,13 @@ class HTMLReporter:
         template = self.env.get_template("report.html.j2")
 
         # Prepare data for template
-        data = self._prepare_template_data(verdict)
+        data = self._prepare_template_data(verdict, lang)
 
         return template.render(**data)
 
-    def _prepare_template_data(self, verdict: Verdict) -> Dict[str, Any]:
+    def _prepare_template_data(
+        self, verdict: Verdict, lang: str = "en"
+    ) -> Dict[str, Any]:
         """Prepare data for HTML template."""
         # Group evidence by category and severity
         evidence_by_category = {}
@@ -51,6 +55,8 @@ class HTMLReporter:
         return {
             "verdict": verdict,
             "evidence_by_category": evidence_by_category,
+            "t": i18n.get_translator(lang),
+            "lang": lang,
             "severity_colors": {
                 "critical": "danger",
                 "high": "danger",

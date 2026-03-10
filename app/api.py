@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
 from app.service import ThreatIntelService
+from app.i18n import i18n
 from models import ContextProfile
 from reporters.json_reporter import JSONReporter
 from reporters.html_reporter import HTMLReporter
@@ -46,6 +47,17 @@ class AnalyzeRequest(BaseModel):
     ip: str
     context: Optional[ContextProfile] = None
     refresh: bool = False
+
+
+def _get_lang(request: Request) -> str:
+    """Resolve display language: ?lang= query param → cookie → config default."""
+    lang = request.query_params.get("lang")
+    if lang in i18n.SUPPORTED_LANGS:
+        return lang
+    cookie_lang = request.cookies.get("preferred_locale")
+    if cookie_lang in i18n.SUPPORTED_LANGS:
+        return cookie_lang
+    return settings.language
 
 
 @app.get("/healthz")
@@ -136,7 +148,14 @@ async def debug_sources(ip: str):
 @app.get("/")
 async def dashboard(request: Request):
     """Web dashboard for IP analysis."""
-    return templates.TemplateResponse("dashboard.html.j2", {"request": request})
+    lang = _get_lang(request)
+    t = i18n.get_translator(lang)
+    response = templates.TemplateResponse(
+        "dashboard.html.j2",
+        {"request": request, "t": t, "lang": lang},
+    )
+    response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
+    return response
 
 
 @app.post("/analyze")
@@ -144,22 +163,29 @@ async def analyze_web(
     request: Request, ip: str = Form(...), refresh: bool = Form(False)
 ):
     """Web form submission for IP analysis."""
+    lang = _get_lang(request)
+    t = i18n.get_translator(lang)
     try:
         verdict = await service.analyze_ip(ip, refresh=refresh)
-        html_report = html_reporter.generate(verdict)
-        return templates.TemplateResponse(
+        html_report = html_reporter.generate(verdict, lang=lang)
+        response = templates.TemplateResponse(
             "dashboard.html.j2",
             {
                 "request": request,
                 "verdict": verdict,
                 "html_report": html_report,
                 "ip": ip,
+                "t": t,
+                "lang": lang,
             },
         )
     except Exception as e:
-        return templates.TemplateResponse(
-            "dashboard.html.j2", {"request": request, "error": str(e), "ip": ip}
+        response = templates.TemplateResponse(
+            "dashboard.html.j2",
+            {"request": request, "error": str(e), "ip": ip, "t": t, "lang": lang},
         )
+    response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
+    return response
 
 
 if __name__ == "__main__":
