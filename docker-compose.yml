@@ -1,0 +1,41 @@
+services:
+  # ─── TIRE 应用服务 ──────────────────────────────────────────
+  tire:
+    build: .
+    container_name: tire-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # 持久化缓存数据库（避免每次重启丢失缓存）
+      - tire-cache:/app/cache
+      # 挂载规则文件（方便热更新规则而无需重建镜像）
+      - ./rules:/app/rules:ro
+    networks:
+      - tire-net
+    # 不直接暴露端口，通过 Nginx 反代访问
+    expose:
+      - "8000"
+
+  # ─── Nginx 反向代理 ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: tire-nginx
+    restart: unless-stopped
+    ports:
+      - "${TIRE_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      tire:
+        condition: service_healthy
+    networks:
+      - tire-net
+
+volumes:
+  tire-cache:
+    driver: local
+
+networks:
+  tire-net:
+    driver: bridge
