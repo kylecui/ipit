@@ -1,21 +1,21 @@
 sources:
   abuseipdb:
     rules:
-      - condition: confidence >= 90
+      - condition: abuse_confidence_score >= 90
         score_delta: 30
         severity: high
         title: "High abuse confidence"
-        detail_template: "AbuseIPDB confidence score: {confidence}%"
-      - condition: confidence >= 70
+        detail_template: "AbuseIPDB confidence score: {abuse_confidence_score}%"
+      - condition: abuse_confidence_score >= 70
         score_delta: 20
         severity: medium
         title: "Moderate abuse confidence"
-        detail_template: "AbuseIPDB confidence score: {confidence}%"
-      - condition: confidence > 0
+        detail_template: "AbuseIPDB confidence score: {abuse_confidence_score}%"
+      - condition: abuse_confidence_score > 0
         score_delta: 5
         severity: low
         title: "Low abuse confidence"
-        detail_template: "AbuseIPDB confidence score: {confidence}%"
+        detail_template: "AbuseIPDB confidence score: {abuse_confidence_score}%"
   otx:
     rules:
       - condition: pulse_count > 0
