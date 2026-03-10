@@ -74,6 +74,12 @@ class CollectorAggregator:
                     "error": str(result),
                 }
             else:
+                ok = result.get("ok", False)
+                error = result.get("error")
+                logger.info(
+                    f"Collector {collector_name}: ok={ok}"
+                    + (f", error={error}" if error else "")
+                )
                 aggregated[collector_name] = result
 
         return aggregated

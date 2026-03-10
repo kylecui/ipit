@@ -2,6 +2,17 @@
 FastAPI interface for Threat Intelligence Reasoning Engine.
 """
 
+import logging
+import os
+from app.config import settings
+
+# Configure logging BEFORE anything else imports loggers
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -12,6 +23,8 @@ from models import ContextProfile
 from reporters.json_reporter import JSONReporter
 from reporters.html_reporter import HTMLReporter
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="Threat Intelligence Reasoning Engine",
     description="Multi-source threat intelligence analysis and reasoning engine",
@@ -21,7 +34,6 @@ app = FastAPI(
 service = ThreatIntelService()
 json_reporter = JSONReporter()
 html_reporter = HTMLReporter()
-import os
 
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -85,6 +97,40 @@ async def api_docs():
     """Redirect to FastAPI docs."""
     # FastAPI automatically provides /docs endpoint
     pass
+
+
+@app.get("/api/v1/debug/sources/{ip}")
+async def debug_sources(ip: str):
+    """Debug endpoint: show raw collector results for an IP (always refreshes)."""
+    try:
+        from collectors import CollectorAggregator
+
+        aggregator = CollectorAggregator()
+        results = await aggregator.collect_all(ip)
+
+        summary = {}
+        for source_name, result in results.items():
+            ok = result.get("ok", False)
+            error = result.get("error")
+            data = result.get("data")
+            summary[source_name] = {
+                "ok": ok,
+                "error": error,
+                "data_keys": list(data.keys()) if isinstance(data, dict) else None,
+                "data_preview": {
+                    k: v
+                    for k, v in (data or {}).items()
+                    if isinstance(v, (int, float, str, bool))
+                }
+                if isinstance(data, dict)
+                else None,
+            }
+
+        return JSONResponse(content=summary)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Debug collection failed: {str(e)}"
+        )
 
 
 @app.get("/")

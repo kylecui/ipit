@@ -31,18 +31,27 @@ class VirusTotalCollector(BaseCollector):
             url = f"{self.base_url}/ip_addresses/{observable}"
             headers = {"x-apikey": self.api_key, "accept": "application/json"}
 
+            logger.info(f"VirusTotal querying {observable}")
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
 
                 data = response.json()
-                return self._parse_response(data)
+                result = self._parse_response(data)
+                logger.info(
+                    f"VirusTotal result for {observable}: "
+                    f"malicious={result['data']['malicious_count']}, "
+                    f"suspicious={result['data']['suspicious_count']}"
+                )
+                return result
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                # IP not found in VT
+                logger.info(f"VirusTotal: IP {observable} not found (404)")
                 return self._empty_response()
-            logger.error(f"VirusTotal HTTP error for {observable}: {e}")
+            logger.error(
+                f"VirusTotal HTTP error for {observable}: HTTP {e.response.status_code}"
+            )
             return self._error_response(f"HTTP {e.response.status_code}")
         except Exception as e:
             logger.error(f"VirusTotal error for {observable}: {e}")

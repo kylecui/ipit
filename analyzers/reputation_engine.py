@@ -45,6 +45,11 @@ class ReputationEngine:
         # Analyze each source
         sources = profile.sources or {}
 
+        # Log which sources are available and their status
+        for src_name, src_data in sources.items():
+            is_ok = src_data.get("ok", False) if isinstance(src_data, dict) else False
+            logger.info(f"Source '{src_name}': ok={is_ok}")
+
         # Apply source-specific rules
         if "abuseipdb" in self.scoring_rules.get("sources", {}):
             score_delta, abuse_evidence = self._analyze_source(
@@ -109,15 +114,31 @@ class ReputationEngine:
         evidence = []
 
         if not source_data.get("ok", False):
+            logger.debug(f"Skipping source '{source_name}': ok=False or missing")
             return score, evidence
 
         data = source_data.get("data", {})
+        if not data:
+            logger.debug(f"Skipping source '{source_name}': no data")
+            return score, evidence
+
         source_rules = (
             self.scoring_rules.get("sources", {}).get(source_name, {}).get("rules", [])
         )
 
+        if not source_rules:
+            logger.debug(f"No scoring rules defined for source '{source_name}'")
+            return score, evidence
+
+        logger.debug(
+            f"Evaluating {len(source_rules)} rules for '{source_name}' with data keys: {list(data.keys())}"
+        )
+
         for rule in source_rules:
-            if self._evaluate_condition(rule.get("condition", ""), data):
+            condition = rule.get("condition", "")
+            matched = self._evaluate_condition(condition, data)
+            logger.debug(f"Rule '{source_name}' condition '{condition}' → {matched}")
+            if matched:
                 score_delta = self._calculate_score_delta(
                     rule.get("score_delta", 0), data
                 )

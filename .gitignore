@@ -1,6 +1,8 @@
-collectors/__pycache__/
-*.pyc
 __pycache__/
+*.pyc
+*.pyo
+cache/*.db
 .env
 .ruff_cache/
 .prompts.litcoffee
+nul
