@@ -67,6 +67,27 @@ class ReputationEngine:
             score += score_delta
             evidence.extend(gn_evidence)
 
+        if "virustotal" in self.scoring_rules.get("sources", {}):
+            score_delta, vt_evidence = self._analyze_source(
+                sources.get("virustotal", {}), "virustotal"
+            )
+            score += score_delta
+            evidence.extend(vt_evidence)
+
+        if "honeynet" in self.scoring_rules.get("sources", {}):
+            score_delta, honeynet_evidence = self._analyze_source(
+                sources.get("honeynet", {}), "honeynet"
+            )
+            score += score_delta
+            evidence.extend(honeynet_evidence)
+
+        if "internal_flow" in self.scoring_rules.get("sources", {}):
+            score_delta, flow_evidence = self._analyze_source(
+                sources.get("internal_flow", {}), "internal_flow"
+            )
+            score += score_delta
+            evidence.extend(flow_evidence)
+
         # Apply semantic adjustments
         if profile.tags:
             score_delta, semantic_evidence = self._apply_semantic_adjustments(
