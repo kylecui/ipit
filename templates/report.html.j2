@@ -31,22 +31,26 @@
             </div>
             <div class="col-md-6">
                 <h3>{{ t('report.score_breakdown') }}</h3>
+                <p class="text-muted small mb-2">{{ t('report.score_hint') }}</p>
                 <div class="row text-center">
+                    {% set rep_color = 'success' if verdict.reputation_score <= 20 else ('warning' if verdict.reputation_score <= 45 else 'danger') %}
+                    {% set ctx_color = 'success' if verdict.contextual_score <= 0 else ('warning' if verdict.contextual_score <= 10 else 'danger') %}
+                    {% set final_color = 'success' if verdict.final_score <= 20 else ('warning' if verdict.final_score <= 45 else ('danger' if verdict.final_score > 45 else 'warning')) %}
                     <div class="col-4">
                         <div class="border rounded p-2">
-                            <div class="h5 text-primary">{{ verdict.reputation_score }}</div>
+                            <div class="h5 text-{{ rep_color }}">{{ verdict.reputation_score }}</div>
                             <small>{{ t('report.reputation') }}</small>
                         </div>
                     </div>
                     <div class="col-4">
                         <div class="border rounded p-2">
-                            <div class="h5 text-info">{{ verdict.contextual_score }}</div>
+                            <div class="h5 text-{{ ctx_color }}">{{ verdict.contextual_score }}</div>
                             <small>{{ t('report.contextual') }}</small>
                         </div>
                     </div>
                     <div class="col-4">
                         <div class="border rounded p-2">
-                            <div class="h5 text-success">{{ verdict.final_score }}</div>
+                            <div class="h5 text-{{ final_color }}">{{ verdict.final_score }}<small class="text-muted">/100</small></div>
                             <small>{{ t('report.final') }}</small>
                         </div>
                     </div>

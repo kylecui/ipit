@@ -14,6 +14,7 @@
     "report.verdict_summary": "判定摘要",
     "report.confidence": "置信度：{value}%",
     "report.score_breakdown": "评分详情",
+    "report.score_hint": "威胁评分：0 = 安全，100 = 严重威胁。分数越高，风险越大。",
     "report.reputation": "信誉评分",
     "report.contextual": "上下文评分",
     "report.final": "最终评分",

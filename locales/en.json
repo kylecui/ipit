@@ -14,6 +14,7 @@
     "report.verdict_summary": "Verdict Summary",
     "report.confidence": "Confidence: {value}%",
     "report.score_breakdown": "Score Breakdown",
+    "report.score_hint": "Threat score: 0 = safe, 100 = critical. Higher score = higher risk.",
     "report.reputation": "Reputation",
     "report.contextual": "Contextual",
     "report.final": "Final",
