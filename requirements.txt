@@ -5,6 +5,7 @@ typer
 pydantic
 pydantic-settings
 jinja2
+python-multipart
 python-dotenv
 rich
 pyyaml
