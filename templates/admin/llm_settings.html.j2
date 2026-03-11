@@ -1,0 +1,72 @@
+{% extends "admin/base_admin.html.j2" %}
+
+{% block title %}{{ t('admin.llm_settings') }}{% endblock %}
+{% block nav_llm %}active{% endblock %}
+{% block page_title %}{{ t('admin.llm_settings') }}{% endblock %}
+
+{% block content %}
+{% if msg %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="post" action="{{ root_path }}/admin/settings/llm">
+                    <div class="mb-3">
+                        <label for="api_key" class="form-label">{{ t('admin.api_key') }}</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="api_key" name="api_key"
+                                   value="{{ llm.api_key }}">
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePassword()">
+                                <span id="toggleLabel">{{ t('admin.show') }}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="model" class="form-label">{{ t('admin.model') }}</label>
+                        <input type="text" class="form-control" id="model" name="model"
+                               value="{{ llm.model }}" placeholder="gpt-4o">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="base_url" class="form-label">{{ t('admin.base_url') }}</label>
+                        <input type="text" class="form-control" id="base_url" name="base_url"
+                               value="{{ llm.base_url }}" placeholder="https://api.openai.com/v1">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">{{ t('admin.save') }}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card border-info">
+            <div class="card-body">
+                <p class="text-muted mb-0">{{ t('admin.llm_info') }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function togglePassword() {
+    var input = document.getElementById('api_key');
+    var label = document.getElementById('toggleLabel');
+    if (input.type === 'password') {
+        input.type = 'text';
+        label.textContent = '{{ t('admin.hide') }}';
+    } else {
+        input.type = 'password';
+        label.textContent = '{{ t('admin.show') }}';
+    }
+}
+</script>
+{% endblock %}
