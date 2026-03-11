@@ -242,17 +242,35 @@ class AdminDB:
     # ── Bootstrap ───────────────────────────────────────────────
 
     def ensure_admin_exists(self) -> None:
-        """Create default admin user if no users exist."""
+        """Create default admin user if no users exist.
+
+        This runs during application startup and must be safe under
+        multi-worker startup races against a persisted database.
+        """
+        default_pw = os.environ.get("ADMIN_PASSWORD", "admin")
+        now = datetime.utcnow().isoformat()
+        password_hash = bcrypt.hashpw(
+            default_pw.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
+
         with self._get_conn() as conn:
-            count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        if count == 0:
-            default_pw = os.environ.get("ADMIN_PASSWORD", "admin")
-            self.create_user(
-                username="admin",
-                password=default_pw,
-                display_name="Administrator",
-                is_admin=True,
+            cursor = conn.execute(
+                """INSERT INTO users
+                   (username, password_hash, display_name, is_admin, created_at, updated_at)
+                   SELECT ?, ?, ?, ?, ?, ?
+                   WHERE NOT EXISTS (SELECT 1 FROM users)
+                """,
+                (
+                    "admin",
+                    password_hash,
+                    "Administrator",
+                    1,
+                    now,
+                    now,
+                ),
             )
+
+        if cursor.rowcount:
             logger.info(
                 "Created default admin user (username: admin). "
                 "Change the password after first login!"
