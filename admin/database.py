@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 # Default DB path relative to project root
 _DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "admin", "admin.db")
+
+
+def _utc_now_iso() -> str:
+    """Return an ISO-8601 UTC timestamp."""
+    return datetime.now(UTC).isoformat()
 
 
 class AdminDB:
@@ -80,7 +85,7 @@ class AdminDB:
         is_admin: bool = False,
     ) -> int:
         """Create a new user. Returns user id."""
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             password.encode("utf-8"), bcrypt.gensalt()
         ).decode("utf-8")
@@ -138,7 +143,7 @@ class AdminDB:
 
     def update_password(self, user_id: int, new_password: str) -> None:
         """Update user password."""
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             new_password.encode("utf-8"), bcrypt.gensalt()
         ).decode("utf-8")
@@ -155,7 +160,7 @@ class AdminDB:
         preferences: dict | None = None,
     ) -> None:
         """Update user profile fields."""
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         updates = ["updated_at = ?"]
         params: list[Any] = [now]
         if display_name is not None:
@@ -204,7 +209,7 @@ class AdminDB:
         base_url: str = "https://api.openai.com/v1",
     ) -> None:
         """Save or update LLM settings for a user."""
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO llm_settings (user_id, api_key, model, base_url, updated_at)
@@ -221,7 +226,7 @@ class AdminDB:
 
     def log_action(self, user_id: int | None, action: str, detail: str = "") -> None:
         """Record an audit entry."""
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT INTO audit_log (user_id, action, detail, created_at) VALUES (?, ?, ?, ?)",
@@ -248,7 +253,7 @@ class AdminDB:
         multi-worker startup races against a persisted database.
         """
         default_pw = os.environ.get("ADMIN_PASSWORD", "admin")
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             default_pw.encode("utf-8"), bcrypt.gensalt()
         ).decode("utf-8")

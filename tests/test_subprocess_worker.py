@@ -6,6 +6,8 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import suppress
+from typing import Any
 import pytest
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -51,10 +53,10 @@ class _FakePluginResult:
 
     source: str = "test_plugin"
     ok: bool = True
-    raw_data: dict = None
-    normalized_data: dict = None
-    evidence: list = field(default_factory=list)
-    error: str = None
+    raw_data: dict[str, Any] | None = None
+    normalized_data: dict[str, Any] | None = None
+    evidence: list[Any] = field(default_factory=list)
+    error: str | None = None
 
 
 # ── Tests: _serialize_result ─────────────────────────────────────
@@ -174,6 +176,19 @@ class TestWriteError:
 class TestMain:
     """Test main() entry point function."""
 
+    @staticmethod
+    def _mock_asyncio_run_with_result(result=None, error=None):
+        """Build a side effect that closes the passed coroutine before returning."""
+
+        def _runner(coro):
+            with suppress(RuntimeError):
+                coro.close()
+            if error is not None:
+                raise error
+            return result
+
+        return _runner
+
     def test_empty_input_exits_with_1(self):
         """Empty stdin causes sys.exit(1)."""
         with (
@@ -238,7 +253,9 @@ class TestMain:
             mock_stdin.read.return_value = json.dumps(request)
             mock_stdout.write = MagicMock()
             mock_stdout.flush = MagicMock()
-            mock_run.return_value = fake_output
+            mock_run.side_effect = self._mock_asyncio_run_with_result(
+                result=fake_output
+            )
             main()
 
         # Resource limits applied
@@ -272,7 +289,9 @@ class TestMain:
             mock_stdin.read.return_value = json.dumps(request)
             mock_stdout.write = MagicMock()
             mock_stdout.flush = MagicMock()
-            mock_run.return_value = {"ok": True, "result": {}}
+            mock_run.side_effect = self._mock_asyncio_run_with_result(
+                result={"ok": True, "result": {}}
+            )
             main()
 
             assert os.environ.get("MY_KEY") == "my_value"
@@ -299,7 +318,9 @@ class TestMain:
             mock_stdin.read.return_value = json.dumps(request)
             mock_stdout.write = MagicMock()
             mock_stdout.flush = MagicMock()
-            mock_run.side_effect = ImportError("No module named 'some.module'")
+            mock_run.side_effect = self._mock_asyncio_run_with_result(
+                error=ImportError("No module named 'some.module'")
+            )
             main()
 
         written = mock_stdout.write.call_args[0][0]
