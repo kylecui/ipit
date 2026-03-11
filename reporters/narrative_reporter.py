@@ -38,13 +38,20 @@ class NarrativeReporter:
         template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
         self.env = Environment(loader=FileSystemLoader(template_dir))
 
-    async def generate(self, verdict: Verdict, lang: str = "en") -> str:
+    async def generate(
+        self,
+        verdict: Verdict,
+        lang: str = "en",
+        llm_overrides: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Generate a detailed narrative report.
 
         Args:
             verdict: Analysis verdict with raw_sources
             lang: Language code ("en" or "zh")
+            llm_overrides: Per-user LLM settings dict with optional
+                           api_key, model, base_url keys
 
         Returns:
             Complete HTML page string
@@ -52,12 +59,19 @@ class NarrativeReporter:
         source_data = self._extract_source_data(verdict)
         facts = self._build_structured_facts(source_data, verdict)
 
-        # Try LLM generation
+        # Try LLM generation (with per-user overrides when available)
         llm_sections: Dict[str, str] = {}
         llm_enhanced = False
-        if llm_client.enabled:
+        overrides = llm_overrides or {}
+        if llm_client.is_enabled(overrides):
             system_prompt, user_prompt = self._build_llm_prompt(facts, lang)
-            response = await llm_client.generate(system_prompt, user_prompt)
+            response = await llm_client.generate(
+                system_prompt,
+                user_prompt,
+                api_key=overrides.get("api_key") or None,
+                model=overrides.get("model") or None,
+                base_url=overrides.get("base_url") or None,
+            )
             if response:
                 llm_sections = self._parse_llm_response(response)
                 llm_enhanced = bool(llm_sections)

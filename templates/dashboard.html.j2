@@ -14,7 +14,12 @@
                     <div class="card-header bg-primary text-white">
                         <div class="d-flex justify-content-between align-items-center">
                             <h1 class="h4 mb-0">{{ t('app.title') }}</h1>
-                            <div>
+                            <div class="d-flex align-items-center">
+                                {% if user %}
+                                <span class="text-white-50 me-2">{{ user.display_name }}</span>
+                                <a href="{{ root_path }}/admin/" class="btn btn-sm btn-outline-light me-2">{{ t('admin.title') }}</a>
+                                <a href="{{ root_path }}/admin/logout" class="btn btn-sm btn-outline-light me-2">{{ t('admin.logout') }}</a>
+                                {% endif %}
                                 <a href="#" onclick="switchLang('en'); return false;" class="text-white text-decoration-none {% if lang|default('en') != 'zh' %}fw-bold{% endif %}">EN</a>
                                 <span class="text-white mx-1">|</span>
                                 <a href="#" onclick="switchLang('zh'); return false;" class="text-white text-decoration-none {% if lang|default('en') == 'zh' %}fw-bold{% endif %}">中文</a>

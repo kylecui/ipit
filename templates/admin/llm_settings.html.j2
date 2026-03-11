@@ -16,7 +16,7 @@
     <div class="col-lg-8">
         <div class="card mb-4">
             <div class="card-body">
-                <form method="post" action="{{ root_path }}/admin/settings/llm">
+                <form method="post" action="{{ root_path }}/admin/settings/llm" id="llmForm">
                     <div class="mb-3">
                         <label for="api_key" class="form-label">{{ t('admin.api_key') }}</label>
                         <div class="input-group">
@@ -29,15 +29,34 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="model" class="form-label">{{ t('admin.model') }}</label>
-                        <input type="text" class="form-control" id="model" name="model"
-                               value="{{ llm.model }}" placeholder="gpt-4o">
-                    </div>
-
-                    <div class="mb-3">
                         <label for="base_url" class="form-label">{{ t('admin.base_url') }}</label>
                         <input type="text" class="form-control" id="base_url" name="base_url"
                                value="{{ llm.base_url }}" placeholder="https://api.openai.com/v1">
+                    </div>
+
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-outline-info" id="validateBtn" onclick="validateLLM()">
+                            {{ t('admin.validate_connection') }}
+                        </button>
+                        <span id="validateStatus" class="ms-2"></span>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="model" class="form-label">{{ t('admin.model') }}</label>
+                        <div id="modelInputWrap">
+                            <input type="text" class="form-control" id="modelText" name="model"
+                                   value="{{ llm.model }}" placeholder="gpt-4o">
+                        </div>
+                        <div id="modelSelectWrap" style="display:none;">
+                            <div class="input-group">
+                                <select class="form-select" id="modelSelect" name="model_select">
+                                    <option value="">-- {{ t('admin.select_model') }} --</option>
+                                </select>
+                                <button class="btn btn-outline-secondary btn-sm" type="button" onclick="switchToManual()">
+                                    {{ t('admin.manual_input') }}
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-primary">{{ t('admin.save') }}</button>
@@ -48,7 +67,9 @@
     <div class="col-lg-4">
         <div class="card border-info">
             <div class="card-body">
-                <p class="text-muted mb-0">{{ t('admin.llm_info') }}</p>
+                <p class="text-muted mb-2">{{ t('admin.llm_info') }}</p>
+                <hr>
+                <p class="text-muted mb-0"><small>{{ t('admin.llm_validate_hint') }}</small></p>
             </div>
         </div>
     </div>
@@ -57,16 +78,108 @@
 
 {% block extra_js %}
 <script>
+var currentModel = '{{ llm.model }}';
+
 function togglePassword() {
     var input = document.getElementById('api_key');
     var label = document.getElementById('toggleLabel');
     if (input.type === 'password') {
         input.type = 'text';
-        label.textContent = '{{ t('admin.hide') }}';
+        label.textContent = '{{ t("admin.hide") }}';
     } else {
         input.type = 'password';
-        label.textContent = '{{ t('admin.show') }}';
+        label.textContent = '{{ t("admin.show") }}';
     }
 }
+
+function validateLLM() {
+    var btn = document.getElementById('validateBtn');
+    var status = document.getElementById('validateStatus');
+    var apiKey = document.getElementById('api_key').value.trim();
+    var baseUrl = document.getElementById('base_url').value.trim();
+
+    if (!apiKey || !baseUrl) {
+        status.innerHTML = '<span class="text-warning">{{ t("admin.fill_key_url") }}</span>';
+        return;
+    }
+
+    btn.disabled = true;
+    status.innerHTML = '<span class="text-muted">{{ t("admin.validating") }}</span>';
+
+    fetch('{{ root_path }}/admin/api/llm/validate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({api_key: apiKey, base_url: baseUrl})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+            status.innerHTML = '<span class="text-success">✓ {{ t("admin.connection_ok") }}</span>';
+            if (data.models && data.models.length > 0) {
+                populateModels(data.models);
+            }
+        } else {
+            status.innerHTML = '<span class="text-danger">✗ ' + (data.error || 'Failed') + '</span>';
+        }
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        status.innerHTML = '<span class="text-danger">✗ ' + err + '</span>';
+    });
+}
+
+function populateModels(models) {
+    var select = document.getElementById('modelSelect');
+    var textInput = document.getElementById('modelText');
+    select.innerHTML = '<option value="">-- {{ t("admin.select_model") }} --</option>';
+
+    models.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        if (m === currentModel || m === textInput.value) {
+            opt.selected = true;
+        }
+        select.appendChild(opt);
+    });
+
+    // Switch to dropdown mode
+    document.getElementById('modelInputWrap').style.display = 'none';
+    document.getElementById('modelSelectWrap').style.display = 'block';
+    textInput.name = '';
+    select.name = 'model';
+
+    // Sync select back to hidden text for form submit
+    select.addEventListener('change', function() {
+        textInput.value = this.value;
+    });
+
+    // If a model was pre-selected, sync it
+    if (select.value) {
+        textInput.value = select.value;
+    }
+}
+
+function switchToManual() {
+    var textInput = document.getElementById('modelText');
+    var select = document.getElementById('modelSelect');
+    document.getElementById('modelInputWrap').style.display = 'block';
+    document.getElementById('modelSelectWrap').style.display = 'none';
+    textInput.name = 'model';
+    select.name = '';
+}
+
+// On form submit, ensure the correct model value is sent
+document.getElementById('llmForm').addEventListener('submit', function() {
+    var textInput = document.getElementById('modelText');
+    var select = document.getElementById('modelSelect');
+    if (document.getElementById('modelSelectWrap').style.display !== 'none' && select.value) {
+        textInput.value = select.value;
+    }
+    // Ensure name is set on the text input for submission
+    textInput.name = 'model';
+    select.name = '';
+});
 </script>
 {% endblock %}

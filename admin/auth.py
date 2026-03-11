@@ -44,10 +44,18 @@ def require_admin(request: Request) -> dict[str, Any]:
 
 
 def login_redirect(request: Request) -> RedirectResponse:
-    """Redirect to login page, preserving root_path."""
+    """Redirect to login page, preserving root_path and original URL as 'next'."""
     from app.config import settings
+    from urllib.parse import quote
 
+    # Capture the original URL so we can redirect back after login
+    original_url = str(request.url.path)
+    query = str(request.url.query)
+    if query:
+        original_url = f"{original_url}?{query}"
+
+    next_param = quote(original_url, safe="")
     return RedirectResponse(
-        url=f"{settings.root_path}/admin/login",
+        url=f"{settings.root_path}/admin/login?next={next_param}",
         status_code=303,
     )

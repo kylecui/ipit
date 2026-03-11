@@ -33,6 +33,7 @@
                     <div class="alert alert-danger py-2">{{ error }}</div>
                     {% endif %}
                     <form method="post" action="{{ root_path }}/admin/login">
+                        <input type="hidden" name="next_url" value="{{ next_url|default('') }}">
                         <div class="mb-3">
                             <label for="username" class="form-label">{{ t('admin.username') }}</label>
                             <input type="text" class="form-control" id="username" name="username" required autofocus>
@@ -51,7 +52,9 @@
     <script>
     function switchLang(lang) {
         var url = window.location.pathname;
-        window.location.href = url + '?lang=' + lang;
+        var params = new URLSearchParams(window.location.search);
+        params.set('lang', lang);
+        window.location.href = url + '?' + params.toString();
     }
     </script>
 </body>

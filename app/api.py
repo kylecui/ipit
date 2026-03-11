@@ -27,6 +27,7 @@ from reporters.html_reporter import HTMLReporter
 from reporters.narrative_reporter import NarrativeReporter
 from admin.routes import router as admin_router
 from admin.database import admin_db
+from admin.auth import get_current_user, login_redirect
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,16 @@ templates = Jinja2Templates(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize admin database and ensure default admin user exists."""
+    """Initialize admin database, ensure default admin user, wire log handler."""
     admin_db.ensure_admin_exists()
+
+    # Attach in-memory log handler for the admin log viewer
+    from admin.log_handler import MemoryLogHandler, LogStore
+
+    store = LogStore()
+    handler = MemoryLogHandler(store)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger().addHandler(handler)
 
 
 class AnalyzeRequest(BaseModel):
@@ -195,11 +204,20 @@ async def debug_sources(ip: str):
 @app.get("/")
 async def dashboard(request: Request):
     """Web dashboard for IP analysis."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
     response = templates.TemplateResponse(
         "dashboard.html.j2",
-        {"request": request, "t": t, "lang": lang, "root_path": settings.root_path},
+        {
+            "request": request,
+            "t": t,
+            "lang": lang,
+            "root_path": settings.root_path,
+            "user": user,
+        },
     )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
     return response
@@ -210,6 +228,9 @@ async def analyze_web(
     request: Request, ip: str = Form(...), refresh: bool = Form(False)
 ):
     """Web form submission for IP analysis."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
     try:
@@ -225,6 +246,7 @@ async def analyze_web(
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
+                "user": user,
             },
         )
     except Exception as e:
@@ -237,6 +259,7 @@ async def analyze_web(
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
+                "user": user,
             },
         )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
@@ -246,13 +269,21 @@ async def analyze_web(
 @app.post("/api/v1/report/generate")
 async def generate_report(request: Request, ip: str = Form(...)):
     """Generate a detailed narrative threat intelligence report."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
     lang = _get_lang(request)
     try:
         # Always refresh: reports are on-demand, and cached verdicts from
         # before the raw_sources field was added have empty raw_sources which
         # causes sections 2-5 of the narrative report to show no data.
         verdict = await service.analyze_ip(ip, refresh=True)
-        html = await narrative_reporter.generate(verdict, lang=lang)
+
+        # Load per-user LLM settings and create a per-request client
+        llm_settings = admin_db.get_llm_settings(user["id"])
+        html = await narrative_reporter.generate(
+            verdict, lang=lang, llm_overrides=llm_settings
+        )
         return HTMLResponse(content=html)
     except Exception as e:
         logger.error("Report generation failed for %s: %s", ip, e)
