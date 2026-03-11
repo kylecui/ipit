@@ -28,20 +28,25 @@ class VirusTotalCollector(BaseCollector):
             return self._error_response("API key not configured")
 
         try:
-            url = f"{self.base_url}/ip_addresses/{observable}"
             headers = {"x-apikey": self.api_key, "accept": "application/json"}
 
             logger.info(f"VirusTotal querying {observable}")
             async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # 1) Base IP report
+                url = f"{self.base_url}/ip_addresses/{observable}"
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
-
                 data = response.json()
-                result = self._parse_response(data)
+
+                # 2) Passive DNS resolutions (separate endpoint)
+                resolutions = await self._fetch_resolutions(client, headers, observable)
+
+                result = self._parse_response(data, resolutions)
                 logger.info(
                     f"VirusTotal result for {observable}: "
                     f"malicious={result['data']['malicious_count']}, "
-                    f"suspicious={result['data']['suspicious_count']}"
+                    f"suspicious={result['data']['suspicious_count']}, "
+                    f"resolutions={len(result['data']['related_domains'])}"
                 )
                 return result
 
@@ -57,7 +62,29 @@ class VirusTotalCollector(BaseCollector):
             logger.error(f"VirusTotal error for {observable}: {e}")
             return self._error_response(str(e))
 
-    def _parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _fetch_resolutions(
+        self, client: httpx.AsyncClient, headers: Dict[str, str], ip: str
+    ) -> list:
+        """Fetch passive DNS resolutions for an IP.  Best-effort — never fails the parent query."""
+        try:
+            url = f"{self.base_url}/ip_addresses/{ip}/resolutions"
+            resp = await client.get(url, headers=headers, params={"limit": 20})
+            resp.raise_for_status()
+            items = resp.json().get("data", [])
+            domains = []
+            for item in items:
+                host = (item.get("attributes") or {}).get("host_name")
+                if host:
+                    domains.append(host)
+            logger.info(f"VirusTotal resolutions for {ip}: {len(domains)} domains")
+            return domains
+        except Exception as e:
+            logger.warning(f"VirusTotal resolutions fetch failed for {ip}: {e}")
+            return []
+
+    def _parse_response(
+        self, data: Dict[str, Any], resolutions: Optional[list] = None
+    ) -> Dict[str, Any]:
         """Parse VirusTotal API response."""
         attributes = data.get("data", {}).get("attributes", {})
 
@@ -78,14 +105,8 @@ class VirusTotalCollector(BaseCollector):
         # Extract tags
         tags = attributes.get("tags", [])
 
-        # Extract related domains (if available)
-        relationships = data.get("data", {}).get("relationships", {})
-        related_domains = []
-        if "resolutions" in relationships:
-            resolutions = relationships["resolutions"].get("data", [])
-            for res in resolutions[:10]:  # Limit to first 10
-                if "attributes" in res and "host_name" in res["attributes"]:
-                    related_domains.append(res["attributes"]["host_name"])
+        # Use resolutions from the dedicated /resolutions endpoint
+        related_domains = resolutions if resolutions else []
 
         return {
             "source": self.name,

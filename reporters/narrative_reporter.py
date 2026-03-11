@@ -107,6 +107,12 @@ class NarrativeReporter:
         rdap = _get_all("rdap")
         rdns = _get_all("reverse_dns")
 
+        # Build domain correlation from multiple sources
+        rdns_hostname = _get("reverse_dns", "hostname")
+        rdns_aliases = _get("reverse_dns", "aliases", [])
+        vt_data = _get_all("virustotal")
+        vt_domains = (vt_data or {}).get("related_domains", [])
+
         return {
             "ip": verdict.object_value,
             # Ownership
@@ -118,12 +124,15 @@ class NarrativeReporter:
             "rdap_type": _get("rdap", "type"),
             "rdap_entities": self._format_rdap_entities(_get("rdap", "entities", [])),
             # Reverse DNS
-            "rdns_hostname": _get("reverse_dns", "hostname"),
-            "rdns_aliases": _get("reverse_dns", "aliases", []),
+            "rdns_hostname": rdns_hostname,
+            "rdns_aliases": rdns_aliases,
+            # Domain correlation (merged from rDNS + VT resolutions)
+            "rdns_domains": self._collect_rdns_domains(rdns_hostname, rdns_aliases),
+            "vt_resolutions": vt_domains,
             # AbuseIPDB
             "abuseipdb": _get_all("abuseipdb"),
             # VirusTotal
-            "virustotal": _get_all("virustotal"),
+            "virustotal": vt_data,
             # OTX
             "otx": _get_all("otx"),
             # GreyNoise
@@ -180,6 +189,20 @@ class NarrativeReporter:
                 results.append(name)
 
         return results
+
+    @staticmethod
+    def _collect_rdns_domains(
+        hostname: Optional[str], aliases: Optional[list]
+    ) -> List[str]:
+        """Collect unique domain names from reverse DNS hostname and aliases."""
+        domains: List[str] = []
+        if hostname:
+            domains.append(hostname)
+        if isinstance(aliases, list):
+            for alias in aliases:
+                if alias and alias not in domains:
+                    domains.append(alias)
+        return domains
 
     # ------------------------------------------------------------------
     # Structured facts (for LLM prompt)
@@ -240,7 +263,7 @@ class NarrativeReporter:
                 domains = vt["related_domains"]
                 if isinstance(domains, list):
                     lines.append(
-                        f"VirusTotal related domains: {', '.join(domains[:10])}."
+                        f"VirusTotal passive DNS resolutions: {', '.join(domains[:10])}."
                     )
 
         # OTX

@@ -215,19 +215,35 @@
     <div class="section-num">03</div>
     <div class="report-container">
         <div class="section-title">{{ t('narrative.section_domain') }}</div>
-        {% if source_data.virustotal and source_data.virustotal.related_domains %}
-        <p><strong>{{ t('narrative.related_domains') }}:</strong></p>
+
+        {% set has_rdns = source_data.rdns_domains | length > 0 %}
+        {% set has_vt = source_data.vt_resolutions | length > 0 %}
+
+        {% if has_rdns %}
+        <p><strong>{{ t('narrative.rdns_records') }}:</strong></p>
         <div class="mb-3">
-            {% for domain in source_data.virustotal.related_domains[:15] %}
+            {% for domain in source_data.rdns_domains %}
             <span class="tag-badge">{{ domain }}</span>
             {% endfor %}
-            {% if source_data.virustotal.related_domains | length > 15 %}
-            <span class="text-muted" style="font-size:0.8rem;">+{{ source_data.virustotal.related_domains | length - 15 }} more</span>
+        </div>
+        {% endif %}
+
+        {% if has_vt %}
+        <p><strong>{{ t('narrative.passive_dns') }}:</strong></p>
+        <div class="mb-3">
+            {% for domain in source_data.vt_resolutions[:20] %}
+            <span class="tag-badge">{{ domain }}</span>
+            {% endfor %}
+            {% if source_data.vt_resolutions | length > 20 %}
+            <span class="text-muted" style="font-size:0.8rem;">+{{ source_data.vt_resolutions | length - 20 }} more</span>
             {% endif %}
         </div>
-        {% else %}
+        {% endif %}
+
+        {% if not has_rdns and not has_vt %}
         <p class="text-muted">{{ t('narrative.no_data') }}</p>
         {% endif %}
+
         {% if llm_enhanced and llm_sections.get('cross_reference') %}
         <div class="narrative-block">{{ llm_sections['cross_reference'] }}</div>
         {% else %}

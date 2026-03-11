@@ -105,6 +105,8 @@
     "narrative.reverse_dns": "反向 DNS",
     "narrative.aliases": "别名",
     "narrative.related_domains": "关联域名",
+    "narrative.rdns_records": "反向DNS记录",
+    "narrative.passive_dns": "被动DNS解析（VirusTotal）",
     "narrative.source": "来源",
     "narrative.severity": "严重性",
     "narrative.score_impact": "评分影响",

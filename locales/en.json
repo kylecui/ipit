@@ -105,6 +105,8 @@
     "narrative.reverse_dns": "Reverse DNS",
     "narrative.aliases": "Aliases",
     "narrative.related_domains": "Related Domains",
+    "narrative.rdns_records": "Reverse DNS Records",
+    "narrative.passive_dns": "Passive DNS (VirusTotal)",
     "narrative.source": "Source",
     "narrative.severity": "Severity",
     "narrative.score_impact": "Score Impact",
