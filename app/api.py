@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 from typing import Optional
 from app.service import ThreatIntelService
 from app.i18n import i18n
@@ -24,6 +25,8 @@ from models import ContextProfile
 from reporters.json_reporter import JSONReporter
 from reporters.html_reporter import HTMLReporter
 from reporters.narrative_reporter import NarrativeReporter
+from admin.routes import router as admin_router
+from admin.database import admin_db
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,12 @@ app = FastAPI(
     root_path=settings.root_path,
 )
 
+# Session middleware for admin portal cookie-based auth
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key)
+
+# Admin portal routes
+app.include_router(admin_router)
+
 service = ThreatIntelService()
 json_reporter = JSONReporter()
 html_reporter = HTMLReporter()
@@ -42,6 +51,12 @@ narrative_reporter = NarrativeReporter()
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "..", "templates")
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize admin database and ensure default admin user exists."""
+    admin_db.ensure_admin_exists()
 
 
 class AnalyzeRequest(BaseModel):

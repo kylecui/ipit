@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
     llm_base_url: str = Field(default="https://api.openai.com/v1", env="LLM_BASE_URL")
 
+    # Admin portal session secret
+    session_secret_key: str = Field(
+        default="change-me-in-production", env="SESSION_SECRET_KEY"
+    )
+
     class Config:
         env_file = ".env"
         case_sensitive = False

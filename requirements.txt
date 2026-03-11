@@ -9,5 +9,7 @@ python-multipart
 python-dotenv
 rich
 pyyaml
+bcrypt
+itsdangerous
 pytest
 pytest-asyncio

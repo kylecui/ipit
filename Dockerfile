@@ -43,6 +43,7 @@ COPY enrichers/ ./enrichers/
 COPY graph/ ./graph/
 COPY plugins/ ./plugins/
 COPY config/ ./config/
+COPY admin/ ./admin/
 
 # Create directories for runtime data
 RUN mkdir -p /app/data && chown -R tire:tire /app
