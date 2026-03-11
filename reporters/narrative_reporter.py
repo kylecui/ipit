@@ -116,7 +116,7 @@ class NarrativeReporter:
             "network": _get("rdap", "network"),
             "handle": _get("rdap", "handle"),
             "rdap_type": _get("rdap", "type"),
-            "rdap_entities": _get("rdap", "entities", []),
+            "rdap_entities": self._format_rdap_entities(_get("rdap", "entities", [])),
             # Reverse DNS
             "rdns_hostname": _get("reverse_dns", "hostname"),
             "rdns_aliases": _get("reverse_dns", "aliases", []),
@@ -138,6 +138,48 @@ class NarrativeReporter:
                 s for s in rs if isinstance(rs.get(s), dict) and rs[s].get("ok")
             ],
         }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_rdap_entities(entities: Any) -> List[str]:
+        """Convert raw RDAP entity dicts into human-readable strings.
+
+        Each entity is ``{"handle": "...", "roles": [...], "vcard": [...]}``.
+        We extract the ``fn`` (full-name) from the vcard and combine it with
+        roles to produce e.g. ``"Censys, Inc. (registrant)"``.
+        """
+        if not isinstance(entities, list):
+            return []
+
+        results: List[str] = []
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+
+            name = ent.get("handle", "")
+
+            # Try to extract human-readable name from vcard
+            vcard = ent.get("vcard")
+            if isinstance(vcard, list) and len(vcard) >= 2:
+                # vcard structure: ["vcard", [ [field, {}, type, value], ... ]]
+                fields = vcard[1] if isinstance(vcard[1], list) else []
+                for field in fields:
+                    if isinstance(field, list) and len(field) >= 4 and field[0] == "fn":
+                        name = str(field[3])
+                        break
+
+            roles = ent.get("roles", [])
+            role_str = ", ".join(roles) if isinstance(roles, list) else ""
+
+            if name and role_str:
+                results.append(f"{name} ({role_str})")
+            elif name:
+                results.append(name)
+
+        return results
 
     # ------------------------------------------------------------------
     # Structured facts (for LLM prompt)
