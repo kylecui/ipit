@@ -94,6 +94,11 @@
                     👤 {{ t('admin.profile') }}
                 </a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link {% block nav_logs %}{% endblock %}" href="{{ root_path }}/admin/logs">
+                    📋 {{ t('admin.logs') }}
+                </a>
+            </li>
             {% if user.is_admin %}
             <li class="nav-item">
                 <a class="nav-link {% block nav_users %}{% endblock %}" href="{{ root_path }}/admin/users">
