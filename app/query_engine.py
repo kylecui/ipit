@@ -20,7 +20,7 @@ from analyzers.reputation_engine import ReputationEngine
 from analyzers.verdict_engine import VerdictEngine
 from analyzers.contextual_risk_engine import ContextualRiskEngine
 from analyzers.noise_engine import NoiseEngine
-from plugins import PluginRegistry, PluginResult, TIPlugin
+from plugins import PluginRegistry, PluginResult, TIPlugin, SandboxedPluginRunner
 from cache.cache_store import CacheStore
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,9 @@ class QueryEngine:
         plugin_config = _load_plugin_config()
         self.registry = PluginRegistry(plugin_config)
         self.registry.discover()
+
+        # v2.0 — Sandbox runner for untrusted plugins
+        self._sandbox_runner = SandboxedPluginRunner()
 
     async def analyze(
         self,
@@ -197,13 +200,30 @@ class QueryEngine:
     async def _safe_query(
         self, plugin: TIPlugin, observable: str, obs_type: str
     ) -> PluginResult:
-        """Run a single plugin query with fault-tolerance."""
+        """Run a single plugin query with fault-tolerance.
+
+        Sandboxed plugins (community/ by default) run in an isolated subprocess.
+        Trusted plugins (builtin/ by default) run in-process for zero overhead.
+        """
+        plugin_name = plugin.metadata.name
+
         try:
-            return await plugin.query(observable, obs_type)
+            if self.registry.is_sandboxed(plugin_name):
+                sandbox_config = self.registry.get_sandbox_config(plugin_name)
+                logger.debug(
+                    "Running plugin '%s' in sandbox (timeout=%ds)",
+                    plugin_name,
+                    sandbox_config.get("timeout", 30),
+                )
+                return await self._sandbox_runner.run(
+                    plugin, observable, obs_type, sandbox_config
+                )
+            else:
+                return await plugin.query(observable, obs_type)
         except Exception as e:
-            logger.error(f"Plugin '{plugin.metadata.name}' crashed: {e}", exc_info=True)
+            logger.error(f"Plugin '{plugin_name}' crashed: {e}", exc_info=True)
             return PluginResult(
-                source=plugin.metadata.name,
+                source=plugin_name,
                 ok=False,
                 raw_data=None,
                 normalized_data=None,

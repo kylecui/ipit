@@ -17,8 +17,15 @@ logger = logging.getLogger(__name__)
 class PluginRegistry:
     """Discovers, registers, and manages TI plugins."""
 
+    # Default sandbox settings
+    _SANDBOX_DEFAULTS = {
+        "timeout": 30,
+        "memory_limit_mb": 512,
+    }
+
     def __init__(self, config: dict[str, Any]) -> None:
         self._plugins: dict[str, TIPlugin] = {}
+        self._plugin_origins: dict[str, str] = {}  # plugin_name -> directory
         self._config = config  # loaded from plugins.yaml
 
     def discover(self, plugin_dirs: list[str] | None = None) -> None:
@@ -52,11 +59,11 @@ class PluginRegistry:
                             and not inspect.isabstract(obj)
                         ):
                             plugin = obj()
-                            self.register(plugin)
+                            self.register(plugin, origin_dir=plugin_dir)
                 except Exception as e:
                     logger.error(f"Failed to load plugin from {file}: {e}")
 
-    def register(self, plugin: TIPlugin) -> None:
+    def register(self, plugin: TIPlugin, origin_dir: str = "") -> None:
         """Register a plugin after validating its contract."""
         meta = plugin.metadata
         name = meta.name
@@ -79,6 +86,7 @@ class PluginRegistry:
         plugin.on_register()
 
         self._plugins[name] = plugin
+        self._plugin_origins[name] = origin_dir
         logger.info(f"Registered plugin: {meta.display_name} v{meta.version}")
 
     def get_enabled(self, obs_type: str) -> list[TIPlugin]:
@@ -96,3 +104,36 @@ class PluginRegistry:
     def list_all(self) -> list[PluginMetadata]:
         """List metadata for all registered plugins."""
         return [p.metadata for p in self._plugins.values()]
+
+    def is_sandboxed(self, plugin_name: str) -> bool:
+        """Determine if a plugin should run in a sandbox.
+
+        Resolution order:
+            1. Explicit `sandboxed` setting in plugins.yaml
+            2. Default based on origin directory:
+               - plugins/builtin/ → False (trusted)
+               - plugins/community/ → True (untrusted)
+        """
+        plugin_config = self._config.get("plugins", {}).get(plugin_name, {})
+
+        # Explicit config takes precedence
+        if "sandboxed" in plugin_config:
+            return plugin_config["sandboxed"]
+
+        # Default: community plugins are sandboxed, builtin are not
+        origin = self._plugin_origins.get(plugin_name, "")
+        return "community" in origin
+
+    def get_sandbox_config(self, plugin_name: str) -> dict[str, Any]:
+        """Get sandbox configuration for a plugin.
+
+        Merges plugin-specific settings with defaults.
+        """
+        plugin_config = self._config.get("plugins", {}).get(plugin_name, {})
+        return {
+            **self._SANDBOX_DEFAULTS,
+            "timeout": plugin_config.get("timeout", self._SANDBOX_DEFAULTS["timeout"]),
+            "memory_limit_mb": plugin_config.get(
+                "memory_limit_mb", self._SANDBOX_DEFAULTS["memory_limit_mb"]
+            ),
+        }

@@ -41,6 +41,7 @@ class TestAbuseIPDBCollector:
         assert collector.name == "abuseipdb"
 
     @patch("collectors.base.BaseCollector._make_request")
+    @pytest.mark.asyncio
     async def test_query_success(self, mock_request, collector):
         """Test successful AbuseIPDB query."""
         mock_request.return_value = {
@@ -70,6 +71,7 @@ class TestAbuseIPDBCollector:
         assert result["data"]["country_code"] == "US"
 
     @patch("collectors.base.BaseCollector._make_request")
+    @pytest.mark.asyncio
     async def test_query_no_api_key(self, mock_request, collector):
         """Test query without API key."""
         collector.api_key = None
@@ -92,6 +94,7 @@ class TestOTXCollector:
         assert collector.name == "otx"
 
     @patch("collectors.base.BaseCollector._make_request")
+    @pytest.mark.asyncio
     async def test_query_success(self, mock_request, collector):
         """Test successful OTX query."""
         mock_request.return_value = {
@@ -129,8 +132,10 @@ class TestGreyNoiseCollector:
         assert collector.name == "greynoise"
 
     @patch("collectors.base.BaseCollector._make_request")
+    @pytest.mark.asyncio
     async def test_query_success(self, mock_request, collector):
         """Test successful GreyNoise query."""
+        collector.api_key = "test-key"
         mock_request.return_value = {
             "ok": True,
             "data": {
@@ -166,6 +171,7 @@ class TestRDAPCollector:
         assert collector.name == "rdap"
 
     @patch("collectors.base.BaseCollector._make_request")
+    @pytest.mark.asyncio
     async def test_query_success(self, mock_request, collector):
         """Test successful RDAP query."""
         mock_request.return_value = {
@@ -220,6 +226,7 @@ class TestReverseDNSCollector:
         """Test Reverse DNS collector initialization."""
         assert collector.name == "reverse_dns"
 
+    @pytest.mark.asyncio
     async def test_query_success(self, collector):
         """Test successful reverse DNS query."""
         # This would normally require network access, so we'll mock the internal method
@@ -237,6 +244,7 @@ class TestReverseDNSCollector:
             assert result["ok"] is True
             assert result["data"]["hostname"] == "dns.google"
 
+    @pytest.mark.asyncio
     async def test_query_no_ptr(self, collector):
         """Test reverse DNS query with no PTR record."""
         with patch.object(collector, "_sync_reverse_dns") as mock_sync:
@@ -265,14 +273,19 @@ class TestCollectorAggregator:
 
     def test_init(self, aggregator):
         """Test aggregator initialization."""
-        assert len(aggregator.collectors) == 5  # All MVP collectors
+        assert len(aggregator.collectors) == 9
         collector_names = [c.name for c in aggregator.collectors]
         assert "abuseipdb" in collector_names
         assert "otx" in collector_names
         assert "greynoise" in collector_names
         assert "rdap" in collector_names
         assert "reverse_dns" in collector_names
+        assert "virustotal" in collector_names
+        assert "shodan" in collector_names
+        assert "honeynet" in collector_names
+        assert "internal_flow" in collector_names
 
+    @pytest.mark.asyncio
     async def test_collect_all_with_mocks(self, aggregator):
         """Test collecting from all sources with mocked responses."""
         # Mock all collectors

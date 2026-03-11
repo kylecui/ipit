@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Threat Intelligence Reasoning Engine",
     description="Multi-source threat intelligence analysis and reasoning engine",
-    version="0.1.0",
+    version="2.0.0",
     root_path=settings.root_path,
 )
 
@@ -148,7 +148,7 @@ async def debug_sources(ip: str):
     import yaml
 
     try:
-        from plugins import PluginRegistry
+        from plugins import PluginRegistry, PluginResult, SandboxedPluginRunner
 
         config_path = os.path.join(
             os.path.dirname(__file__), "..", "config", "plugins.yaml"
@@ -158,15 +158,19 @@ async def debug_sources(ip: str):
 
         registry = PluginRegistry(plugin_config)
         registry.discover()
+        sandbox_runner = SandboxedPluginRunner()
 
         plugins = registry.get_enabled("ip")
 
         async def _safe_query(plugin, observable):
             try:
+                if registry.is_sandboxed(plugin.metadata.name):
+                    sandbox_config = registry.get_sandbox_config(plugin.metadata.name)
+                    return await sandbox_runner.run(
+                        plugin, observable, "ip", sandbox_config
+                    )
                 return await plugin.query(observable, "ip")
             except Exception as e:
-                from plugins import PluginResult
-
                 return PluginResult(
                     source=plugin.metadata.name,
                     ok=False,
@@ -274,10 +278,7 @@ async def generate_report(request: Request, ip: str = Form(...)):
         return login_redirect(request)
     lang = _get_lang(request)
     try:
-        # Always refresh: reports are on-demand, and cached verdicts from
-        # before the raw_sources field was added have empty raw_sources which
-        # causes sections 2-5 of the narrative report to show no data.
-        verdict = await service.analyze_ip(ip, refresh=True)
+        verdict = await service.analyze_ip(ip, refresh=False)
 
         # Load per-user LLM settings and create a per-request client
         llm_settings = admin_db.get_llm_settings(user["id"])

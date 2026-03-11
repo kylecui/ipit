@@ -9,6 +9,12 @@
 # Set api_key_env to the environment variable name, or null
 # if the plugin does not need an API key.
 #
+# Sandbox settings (per-plugin):
+#   sandboxed:        true/false — run in isolated subprocess?
+#                     Default: false for plugins/builtin/, true for plugins/community/
+#   timeout:          seconds before the sandbox kills the plugin (default: 30)
+#   memory_limit_mb:  max memory in MB, Linux only (default: 512)
+#
 # To add a new plugin:
 #   1. Drop a .py file into plugins/builtin/ or plugins/community/
 #   2. Add a config entry below
@@ -20,6 +26,7 @@ plugins:
     enabled: true
     api_key_env: ABUSEIPDB_API_KEY
     priority: 10
+    # sandboxed: false  # builtin default — runs in-process
     config:
       max_age_days: 90
       min_confidence: 25
@@ -28,6 +35,7 @@ plugins:
     enabled: true
     api_key_env: VT_API_KEY
     priority: 10
+    timeout: 60  # VirusTotal passive DNS can be slow
     config:
       include_passive_dns: true
       max_resolutions: 20
@@ -83,3 +91,17 @@ plugins:
   #   priority: 50
   #   config:
   #     max_results: 100
+
+  # ── Example community plugin (ThreatFox) ─────────────────
+  # This is a fully working demo plugin using the free ThreatFox API.
+  # Enable it to see how community plugins integrate with TIRE.
+  # Source: plugins/community/example_plugin.py
+  # Community plugins are sandboxed by default (no need to set sandboxed: true).
+  example_threatfox:
+    enabled: false
+    api_key_env: null
+    priority: 99
+    timeout: 15
+    memory_limit_mb: 256
+    config:
+      timeout_seconds: 10
