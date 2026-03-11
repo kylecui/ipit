@@ -29,12 +29,24 @@ class ReputationEngine:
             logger.error(f"Failed to load scoring rules: {e}")
             return {}
 
-    def analyze(self, profile: IPProfile) -> Tuple[int, List[EvidenceItem]]:
+    def analyze(
+        self,
+        profile: IPProfile,
+        plugin_evidence: List[EvidenceItem] | None = None,
+    ) -> Tuple[int, List[EvidenceItem]]:
         """
         Analyze IP reputation and generate evidence.
 
+        v2.0: When plugin_evidence is provided, source-specific scoring
+        is skipped because each plugin already produced scored evidence.
+        Only semantic tag adjustments are applied here.
+
+        When plugin_evidence is None (backward-compat / v1.0 mode),
+        the old source-specific rule evaluation path is used.
+
         Args:
             profile: Normalized IP profile
+            plugin_evidence: Pre-scored evidence from plugins (v2.0)
 
         Returns:
             Tuple of (reputation_score, evidence_list)
@@ -42,58 +54,27 @@ class ReputationEngine:
         score = 0
         evidence = []
 
-        # Analyze each source
-        sources = profile.sources or {}
+        if plugin_evidence is not None:
+            # v2.0 path — plugins already scored; skip source-specific rules
+            logger.info("Using plugin-provided evidence (v2.0 path)")
+        else:
+            # v1.0 backward-compat path — evaluate source-specific rules
+            sources = profile.sources or {}
 
-        # Log which sources are available and their status
-        for src_name, src_data in sources.items():
-            is_ok = src_data.get("ok", False) if isinstance(src_data, dict) else False
-            logger.info(f"Source '{src_name}': ok={is_ok}")
+            for src_name, src_data in sources.items():
+                is_ok = (
+                    src_data.get("ok", False) if isinstance(src_data, dict) else False
+                )
+                logger.info(f"Source '{src_name}': ok={is_ok}")
 
-        # Apply source-specific rules
-        if "abuseipdb" in self.scoring_rules.get("sources", {}):
-            score_delta, abuse_evidence = self._analyze_source(
-                sources.get("abuseipdb", {}), "abuseipdb"
-            )
-            score += score_delta
-            evidence.extend(abuse_evidence)
+            for source_name in self.scoring_rules.get("sources", {}):
+                score_delta, src_evidence = self._analyze_source(
+                    sources.get(source_name, {}), source_name
+                )
+                score += score_delta
+                evidence.extend(src_evidence)
 
-        if "otx" in self.scoring_rules.get("sources", {}):
-            score_delta, otx_evidence = self._analyze_source(
-                sources.get("otx", {}), "otx"
-            )
-            score += score_delta
-            evidence.extend(otx_evidence)
-
-        if "greynoise" in self.scoring_rules.get("sources", {}):
-            score_delta, gn_evidence = self._analyze_source(
-                sources.get("greynoise", {}), "greynoise"
-            )
-            score += score_delta
-            evidence.extend(gn_evidence)
-
-        if "virustotal" in self.scoring_rules.get("sources", {}):
-            score_delta, vt_evidence = self._analyze_source(
-                sources.get("virustotal", {}), "virustotal"
-            )
-            score += score_delta
-            evidence.extend(vt_evidence)
-
-        if "honeynet" in self.scoring_rules.get("sources", {}):
-            score_delta, honeynet_evidence = self._analyze_source(
-                sources.get("honeynet", {}), "honeynet"
-            )
-            score += score_delta
-            evidence.extend(honeynet_evidence)
-
-        if "internal_flow" in self.scoring_rules.get("sources", {}):
-            score_delta, flow_evidence = self._analyze_source(
-                sources.get("internal_flow", {}), "internal_flow"
-            )
-            score += score_delta
-            evidence.extend(flow_evidence)
-
-        # Apply semantic adjustments
+        # Apply semantic adjustments (always — both v1 and v2)
         if profile.tags:
             score_delta, semantic_evidence = self._apply_semantic_adjustments(
                 profile.tags

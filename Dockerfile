@@ -41,6 +41,8 @@ COPY locales/ ./locales/
 COPY adapters/ ./adapters/
 COPY enrichers/ ./enrichers/
 COPY graph/ ./graph/
+COPY plugins/ ./plugins/
+COPY config/ ./config/
 
 # Create directories for runtime data
 RUN mkdir -p /app/data && chown -R tire:tire /app

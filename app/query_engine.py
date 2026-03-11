@@ -1,32 +1,75 @@
 """
 Query orchestration engine for threat intelligence analysis.
+
+v2.0: Uses PluginRegistry to discover and run TI plugins instead of
+the hardcoded CollectorAggregator. Each plugin handles collection,
+normalization, AND scoring in a single self-contained unit.
 """
 
-from typing import Dict, Any, Optional
-from models import Observable, ContextProfile, IPProfile, Verdict
-from normalizers.ip_normalizer import IPNormalizer
+import asyncio
+import logging
+import os
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
+
+import yaml
+
+from models import Observable, ContextProfile, IPProfile, EvidenceItem, Verdict
 from enrichers.semantic_enricher import SemanticEnricher
 from analyzers.reputation_engine import ReputationEngine
 from analyzers.verdict_engine import VerdictEngine
 from analyzers.contextual_risk_engine import ContextualRiskEngine
 from analyzers.noise_engine import NoiseEngine
-from collectors import CollectorAggregator
+from plugins import PluginRegistry, PluginResult, TIPlugin
 from cache.cache_store import CacheStore
+
+logger = logging.getLogger(__name__)
+
+# ── Profile-level field mapping ────────────────────────────────────
+# Keys that plugins may return in PluginResult.normalized_data
+# and the corresponding IPProfile attribute to set.
+_PROFILE_FIELD_MAP = {
+    "organization": "organization",
+    "country": "country",
+    "asn": "asn",
+    "network": "network",
+    "rdns": "rdns",
+    "hostnames": "hostnames",
+}
+
+
+def _load_plugin_config() -> dict[str, Any]:
+    """Load plugins.yaml from config/plugins.yaml."""
+    config_path = os.path.join(
+        os.path.dirname(__file__), "..", "config", "plugins.yaml"
+    )
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.error(f"Failed to load plugin config: {e}")
+        return {}
 
 
 class QueryEngine:
-    """Orchestrates the threat intelligence analysis pipeline."""
+    """Orchestrates the threat intelligence analysis pipeline.
+
+    v2.0: Replaces CollectorAggregator with PluginRegistry.
+    Plugins are auto-discovered from plugins/builtin/ and plugins/community/.
+    """
 
     def __init__(self):
-        # Placeholder for future dependencies (collectors, analyzers, etc.)
-        self.ip_normalizer = IPNormalizer()
         self.semantic_enricher = SemanticEnricher()
         self.reputation_engine = ReputationEngine()
         self.verdict_engine = VerdictEngine()
-        self.collector_aggregator = CollectorAggregator()
         self.cache = CacheStore()
         self.contextual_risk_engine = ContextualRiskEngine()
         self.noise_engine = NoiseEngine()
+
+        # v2.0 — Plugin system
+        plugin_config = _load_plugin_config()
+        self.registry = PluginRegistry(plugin_config)
+        self.registry.discover()
 
     async def analyze(
         self,
@@ -37,26 +80,25 @@ class QueryEngine:
         """
         Main analysis pipeline.
 
-        Current flow (placeholders):
-        1. collect - gather data from sources
-        2. normalize - standardize the data
-        3. enrich - add semantic information
-        4. analyze - reputation analysis
-        5. verdict - final decision
-        6. report - format output
+        Flow:
+        1. collect — run enabled plugins concurrently
+        2. normalize — apply plugin normalized_data to profile
+        3. enrich — add semantic tags
+        4. analyze — reputation + contextual + noise analysis
+        5. verdict — final decision with evidence fusion
         """
 
         if observable.type == "ip":
-            # Placeholder for IP analysis pipeline
-            profile = await self._collect_ip_data(observable.value, refresh=refresh)
+            profile, plugin_evidence = await self._collect_ip_data(
+                observable.value, refresh=refresh
+            )
             enriched_profile = await self._enrich_ip_profile(profile)
             verdict = await self._analyze_ip_profile(
-                enriched_profile, context, refresh=refresh
+                enriched_profile, plugin_evidence, context, refresh=refresh
             )
             return verdict
 
         elif observable.type == "domain":
-            # Placeholder for domain analysis
             return Verdict(
                 object_type="domain",
                 object_value=observable.value,
@@ -72,7 +114,6 @@ class QueryEngine:
             )
 
         elif observable.type == "url":
-            # Placeholder for URL analysis
             return Verdict(
                 object_type="url",
                 object_value=observable.value,
@@ -90,39 +131,121 @@ class QueryEngine:
         else:
             raise ValueError(f"Unsupported observable type: {observable.type}")
 
-    async def _collect_ip_data(self, ip: str, refresh: bool = False) -> IPProfile:
-        """Collect IP data from all sources."""
+    # ── Collection via plugins ─────────────────────────────────────
+
+    async def _collect_ip_data(
+        self, ip: str, refresh: bool = False
+    ) -> Tuple[IPProfile, List[EvidenceItem]]:
+        """Collect IP data from all enabled plugins.
+
+        Returns:
+            Tuple of (IPProfile, plugin_evidence_list)
+        """
         # Check cache first unless refresh is requested
         if not refresh:
             cached_profile = self.cache.get_normalized_profile(ip)
             if cached_profile:
-                return cached_profile
+                return cached_profile, []
 
-        # Collect raw data
-        collected_data = await self.collector_aggregator.collect_all(ip)
+        # Get enabled plugins for IP observable type
+        plugins = self.registry.get_enabled("ip")
+        logger.info(
+            f"Running {len(plugins)} plugins for IP {ip}: "
+            f"{[p.metadata.name for p in plugins]}"
+        )
 
-        # Cache raw results
-        self.cache.set_collector_results(ip, collected_data)
+        # Run all plugins concurrently with fault-tolerance
+        results = await asyncio.gather(
+            *[self._safe_query(plugin, ip, "ip") for plugin in plugins]
+        )
 
-        # Normalize
-        profile = self.ip_normalizer.normalize(ip, collected_data)
+        # Convert PluginResults → legacy sources dict + collect evidence
+        sources: Dict[str, Dict[str, Any]] = {}
+        all_evidence: List[EvidenceItem] = []
 
-        # Cache normalized profile
+        profile = IPProfile(ip=ip)
+
+        for result in results:
+            # Legacy format for backward compat with NoiseEngine,
+            # narrative_reporter, and graph/correlator
+            sources[result.source] = {
+                "source": result.source,
+                "ok": result.ok,
+                "data": result.raw_data or {},
+                "error": result.error,
+            }
+
+            # Collect evidence from plugins (pre-scored)
+            all_evidence.extend(result.evidence)
+
+            # Apply profile-level normalized data (organization, country, etc.)
+            if result.ok and result.normalized_data:
+                self._apply_profile_data(profile, result.normalized_data)
+
+        profile.sources = sources
+        profile.timestamps = {
+            "normalized_at": datetime.now(),
+            "collected_at": datetime.now(),
+        }
+
+        # Cache raw results and normalized profile
+        self.cache.set_collector_results(ip, sources)
         self.cache.set_normalized_profile(ip, profile)
 
-        return profile
+        return profile, all_evidence
+
+    async def _safe_query(
+        self, plugin: TIPlugin, observable: str, obs_type: str
+    ) -> PluginResult:
+        """Run a single plugin query with fault-tolerance."""
+        try:
+            return await plugin.query(observable, obs_type)
+        except Exception as e:
+            logger.error(f"Plugin '{plugin.metadata.name}' crashed: {e}", exc_info=True)
+            return PluginResult(
+                source=plugin.metadata.name,
+                ok=False,
+                raw_data=None,
+                normalized_data=None,
+                evidence=[],
+                error=f"Plugin crashed: {e}",
+            )
+
+    @staticmethod
+    def _apply_profile_data(
+        profile: IPProfile, normalized_data: Dict[str, Any]
+    ) -> None:
+        """Apply plugin normalized_data fields to the IPProfile.
+
+        Only sets fields that are present in the plugin's output and
+        haven't already been set by a higher-priority plugin.
+        """
+        for data_key, profile_attr in _PROFILE_FIELD_MAP.items():
+            if data_key in normalized_data:
+                current = getattr(profile, profile_attr, None)
+                if current is None or (isinstance(current, list) and len(current) == 0):
+                    setattr(profile, profile_attr, normalized_data[data_key])
+
+    # ── Enrichment ─────────────────────────────────────────────────
 
     async def _enrich_ip_profile(self, profile: IPProfile) -> IPProfile:
         """Enrich IP profile with semantic information."""
         return self.semantic_enricher.enrich(profile)
 
+    # ── Analysis ───────────────────────────────────────────────────
+
     async def _analyze_ip_profile(
         self,
         profile: IPProfile,
+        plugin_evidence: List[EvidenceItem],
         context: Optional[ContextProfile] = None,
         refresh: bool = False,
     ) -> Verdict:
-        """Analyze IP profile for threats."""
+        """Analyze IP profile for threats.
+
+        v2.0 change: Plugins already produced scored evidence. The
+        ReputationEngine now only adds semantic tag adjustments.
+        """
         # Check cache first unless refresh
         if not refresh:
             cached_verdict = self.cache.get_verdict(profile.ip)
@@ -130,7 +253,12 @@ class QueryEngine:
                 return cached_verdict
 
         # Get reputation score and evidence
-        reputation_score, reputation_evidence = self.reputation_engine.analyze(profile)
+        # v2.0: ReputationEngine still evaluates source-specific rules
+        # from scoring_rules.yaml AND applies semantic adjustments.
+        # Plugin evidence is merged in below.
+        reputation_score, reputation_evidence = self.reputation_engine.analyze(
+            profile, plugin_evidence=plugin_evidence
+        )
 
         # Get contextual score and evidence
         contextual_adjustment, contextual_evidence = (
@@ -143,14 +271,20 @@ class QueryEngine:
             profile
         )
 
-        # Combine evidence
-        all_evidence = reputation_evidence + contextual_evidence + noise_evidence
+        # Combine evidence: plugin + reputation + contextual + noise
+        all_evidence = (
+            plugin_evidence + reputation_evidence + contextual_evidence + noise_evidence
+        )
+
+        # Sum plugin evidence scores into reputation_score
+        plugin_score = sum(e.score_delta for e in plugin_evidence)
+        total_reputation_score = reputation_score + plugin_score
 
         # Generate verdict
         verdict = self.verdict_engine.generate_verdict(
             object_type="ip",
             object_value=profile.ip,
-            reputation_score=reputation_score,
+            reputation_score=total_reputation_score,
             contextual_score=contextual_score,
             evidence=all_evidence,
             tags=profile.tags,

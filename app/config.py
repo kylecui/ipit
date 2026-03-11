@@ -1,5 +1,8 @@
 """
 Configuration management for Threat Intelligence Reasoning Engine.
+
+v2.0: Per-source API key fields removed. Plugins resolve their own
+API keys from environment variables declared in plugin metadata.
 """
 
 from pydantic_settings import BaseSettings
@@ -9,13 +12,6 @@ from typing import Optional
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-
-    # API Keys
-    abuseipdb_api_key: Optional[str] = Field(default=None, env="ABUSEIPDB_API_KEY")
-    otx_api_key: Optional[str] = Field(default=None, env="OTX_API_KEY")
-    greynoise_api_key: Optional[str] = Field(default=None, env="GREYNOISE_API_KEY")
-    vt_api_key: Optional[str] = Field(default=None, env="VT_API_KEY")
-    shodan_api_key: Optional[str] = Field(default=None, env="SHODAN_API_KEY")
 
     # Cache settings
     cache_ttl_hours: int = Field(default=24, env="CACHE_TTL_HOURS")
@@ -38,6 +34,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # v2.0: plugins read API keys directly from env
 
 
 # Global settings instance

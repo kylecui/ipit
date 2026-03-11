@@ -115,21 +115,50 @@ async def api_docs():
 
 @app.get("/api/v1/debug/sources/{ip}")
 async def debug_sources(ip: str):
-    """Debug endpoint: show raw collector results for an IP (always refreshes)."""
-    try:
-        from collectors import CollectorAggregator
+    """Debug endpoint: show raw plugin results for an IP (always refreshes).
 
-        aggregator = CollectorAggregator()
-        results = await aggregator.collect_all(ip)
+    v2.0: Uses PluginRegistry instead of CollectorAggregator.
+    """
+    import asyncio
+    import yaml
+
+    try:
+        from plugins import PluginRegistry
+
+        config_path = os.path.join(
+            os.path.dirname(__file__), "..", "config", "plugins.yaml"
+        )
+        with open(config_path, "r", encoding="utf-8") as f:
+            plugin_config = yaml.safe_load(f) or {}
+
+        registry = PluginRegistry(plugin_config)
+        registry.discover()
+
+        plugins = registry.get_enabled("ip")
+
+        async def _safe_query(plugin, observable):
+            try:
+                return await plugin.query(observable, "ip")
+            except Exception as e:
+                from plugins import PluginResult
+
+                return PluginResult(
+                    source=plugin.metadata.name,
+                    ok=False,
+                    raw_data=None,
+                    normalized_data=None,
+                    evidence=[],
+                    error=str(e),
+                )
+
+        results = await asyncio.gather(*[_safe_query(p, ip) for p in plugins])
 
         summary = {}
-        for source_name, result in results.items():
-            ok = result.get("ok", False)
-            error = result.get("error")
-            data = result.get("data")
-            summary[source_name] = {
-                "ok": ok,
-                "error": error,
+        for result in results:
+            data = result.raw_data
+            summary[result.source] = {
+                "ok": result.ok,
+                "error": result.error,
                 "data_keys": list(data.keys()) if isinstance(data, dict) else None,
                 "data_preview": {
                     k: v
