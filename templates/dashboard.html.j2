@@ -24,7 +24,7 @@
                     <div class="card-body">
                         <p class="lead">{{ t('app.description') }}</p>
 
-                        <form method="post" action="/analyze?lang={{ lang|default('en') }}">
+                        <form method="post" action="{{ root_path }}/analyze?lang={{ lang|default('en') }}">
                             <div class="mb-3">
                                 <label for="ip" class="form-label">{{ t('form.ip_label') }}</label>
                                 <input type="text" class="form-control" id="ip" name="ip"
@@ -52,7 +52,7 @@
                             {{ html_report | safe }}
                         </div>
                         <div class="mt-3 text-end">
-                            <form id="reportForm" method="post" action="/api/v1/report/generate?lang={{ lang|default('en') }}" target="_blank">
+                            <form id="reportForm" method="post" action="{{ root_path }}/api/v1/report/generate?lang={{ lang|default('en') }}" target="_blank">
                                 <input type="hidden" name="ip" value="{{ ip }}">
                                 <button type="submit" class="btn btn-outline-secondary" id="reportBtn">
                                     {{ t('narrative.generate') }}
@@ -69,13 +69,14 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
     function switchLang(lang) {
+        var rootPath = '{{ root_path }}';
         var ipInput = document.getElementById('ip');
         var form = ipInput.closest('form');
         if (ipInput.value.trim()) {
-            form.action = '/analyze?lang=' + lang;
+            form.action = rootPath + '/analyze?lang=' + lang;
             form.submit();
         } else {
-            window.location.href = '/?lang=' + lang;
+            window.location.href = rootPath + '/?lang=' + lang;
         }
     }
     </script>

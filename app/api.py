@@ -31,6 +31,7 @@ app = FastAPI(
     title="Threat Intelligence Reasoning Engine",
     description="Multi-source threat intelligence analysis and reasoning engine",
     version="0.1.0",
+    root_path=settings.root_path,
 )
 
 service = ThreatIntelService()
@@ -183,7 +184,7 @@ async def dashboard(request: Request):
     t = i18n.get_translator(lang)
     response = templates.TemplateResponse(
         "dashboard.html.j2",
-        {"request": request, "t": t, "lang": lang},
+        {"request": request, "t": t, "lang": lang, "root_path": settings.root_path},
     )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
     return response
@@ -208,12 +209,20 @@ async def analyze_web(
                 "ip": ip,
                 "t": t,
                 "lang": lang,
+                "root_path": settings.root_path,
             },
         )
     except Exception as e:
         response = templates.TemplateResponse(
             "dashboard.html.j2",
-            {"request": request, "error": str(e), "ip": ip, "t": t, "lang": lang},
+            {
+                "request": request,
+                "error": str(e),
+                "ip": ip,
+                "t": t,
+                "lang": lang,
+                "root_path": settings.root_path,
+            },
         )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
     return response

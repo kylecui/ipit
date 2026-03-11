@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Language
     language: str = Field(default="en", env="LANGUAGE")
 
+    # Deployment: sub-path prefix (e.g. "/v2" when behind a reverse proxy)
+    root_path: str = Field(default="", env="ROOT_PATH")
+
     # LLM settings (for narrative report generation)
     llm_api_key: Optional[str] = Field(default=None, env="LLM_API_KEY")
     llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
