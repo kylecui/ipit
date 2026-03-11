@@ -195,7 +195,10 @@ async def generate_report(request: Request, ip: str = Form(...)):
     """Generate a detailed narrative threat intelligence report."""
     lang = _get_lang(request)
     try:
-        verdict = await service.analyze_ip(ip, refresh=False)
+        # Always refresh: reports are on-demand, and cached verdicts from
+        # before the raw_sources field was added have empty raw_sources which
+        # causes sections 2-5 of the narrative report to show no data.
+        verdict = await service.analyze_ip(ip, refresh=True)
         html = await narrative_reporter.generate(verdict, lang=lang)
         return HTMLResponse(content=html)
     except Exception as e:

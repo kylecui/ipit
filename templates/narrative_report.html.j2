@@ -38,6 +38,11 @@
         .report-header h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
         .report-header .subtitle { opacity: 0.85; font-size: 1.1rem; }
         .report-header .meta { opacity: 0.7; font-size: 0.85rem; margin-top: 0.5rem; }
+        .badge-llm, .badge-template {
+            display: inline-block; padding: 0.3rem 0.75rem; border-radius: 0.25rem;
+            color: #fff; font-weight: 600; font-size: 0.85rem; vertical-align: middle;
+            cursor: help;
+        }
         .badge-llm { background: #198754; }
         .badge-template { background: #0d6efd; }
         /* Section numbering */
@@ -140,9 +145,9 @@
             {{ t('narrative.generated_at') }}: {{ timestamp }}
             &nbsp;|&nbsp;
             {% if llm_enhanced %}
-            <span class="badge badge-llm">{{ t('narrative.llm_badge') }}</span>
+            <span class="badge badge-llm" title="{{ t('narrative.llm_badge_tip') }}">&#x2728; {{ t('narrative.llm_badge') }}</span>
             {% else %}
-            <span class="badge badge-template">{{ t('narrative.template_badge') }}</span>
+            <span class="badge badge-template" title="{{ t('narrative.template_badge_tip') }}">&#x1F4CB; {{ t('narrative.template_badge') }}</span>
             {% endif %}
         </div>
     </div>
