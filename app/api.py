@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 
 from fastapi import FastAPI, HTTPException, Request, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
@@ -23,6 +23,7 @@ from app.i18n import i18n
 from models import ContextProfile
 from reporters.json_reporter import JSONReporter
 from reporters.html_reporter import HTMLReporter
+from reporters.narrative_reporter import NarrativeReporter
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ app = FastAPI(
 service = ThreatIntelService()
 json_reporter = JSONReporter()
 html_reporter = HTMLReporter()
+narrative_reporter = NarrativeReporter()
 
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -186,6 +188,21 @@ async def analyze_web(
         )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
     return response
+
+
+@app.post("/api/v1/report/generate")
+async def generate_report(request: Request, ip: str = Form(...)):
+    """Generate a detailed narrative threat intelligence report."""
+    lang = _get_lang(request)
+    try:
+        verdict = await service.analyze_ip(ip, refresh=False)
+        html = await narrative_reporter.generate(verdict, lang=lang)
+        return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error("Report generation failed for %s: %s", ip, e)
+        raise HTTPException(
+            status_code=500, detail=f"Report generation failed: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

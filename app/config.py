@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Language
     language: str = Field(default="en", env="LANGUAGE")
 
+    # LLM settings (for narrative report generation)
+    llm_api_key: Optional[str] = Field(default=None, env="LLM_API_KEY")
+    llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
+    llm_base_url: str = Field(default="https://api.openai.com/v1", env="LLM_BASE_URL")
+
     class Config:
         env_file = ".env"
         case_sensitive = False

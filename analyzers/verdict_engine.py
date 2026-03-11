@@ -5,7 +5,7 @@ Verdict engine for final risk assessment and decision making.
 import logging
 import yaml
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from models import Verdict, EvidenceItem
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,8 @@ class VerdictEngine:
         reputation_score: int,
         contextual_score: int,
         evidence: List[EvidenceItem],
-        tags: List[str] = None,
+        tags: Optional[List[str]] = None,
+        raw_sources: Optional[Dict[str, Any]] = None,
     ) -> Verdict:
         """
         Generate final verdict from analysis results.
@@ -70,6 +71,7 @@ class VerdictEngine:
             contextual_score: Score from contextual analysis
             evidence: List of evidence items
             tags: Semantic tags
+            raw_sources: Raw collector data from IPProfile.sources
 
         Returns:
             Final Verdict
@@ -104,6 +106,7 @@ class VerdictEngine:
             summary=summary,
             evidence=evidence,
             tags=tags or [],
+            raw_sources=raw_sources or {},
         )
 
     def _determine_level(self, final_score: int, evidence: List[EvidenceItem]) -> str:

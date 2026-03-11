@@ -154,6 +154,7 @@ class QueryEngine:
             contextual_score=contextual_score,
             evidence=all_evidence,
             tags=profile.tags,
+            raw_sources=profile.sources,
         )
 
         # Cache verdict

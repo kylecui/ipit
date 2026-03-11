@@ -3,7 +3,7 @@ Verdict model for final analysis results.
 """
 
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .evidence import EvidenceItem
 
 
@@ -21,3 +21,4 @@ class Verdict(BaseModel):
     summary: str
     evidence: List[EvidenceItem] = []
     tags: List[str] = []
+    raw_sources: Dict[str, Any] = {}
