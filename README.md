@@ -1,253 +1,285 @@
-# Threat Intelligence Reasoning Engine (TIRE)
+# TIRE — Threat Intelligence Reasoning Engine
 
-一个多源威胁情报分析和推理引擎，用于IP/域名/URL可观测对象的分析。
+A multi-source threat intelligence analysis and reasoning engine for IP observables, featuring evidence-driven verdicts, semantic service recognition, and LLM-enhanced narrative reports.
 
-## 🚀 快速开始
+> **Note**: 中文文档请参阅下文。 (Chinese documentation is available below.)
 
-### 1. 安装
+## Key Features
 
-```bash
-# 克隆仓库
-git clone <repository-url>
-cd threat-intel-reasoning-engine
+- **9 Intelligence Sources**: AbuseIPDB, AlienVault OTX, GreyNoise, VirusTotal (including passive DNS/resolutions), Shodan, RDAP, Reverse DNS, Honeynet, and Internal Flow.
+- **Multi-layer Analysis Pipeline**: A structured flow from Collectors → Normalizers → Enrichers → Analyzers → Verdict → Reporters.
+- **Semantic Service Recognition**: YAML-driven service catalog identifies cloud providers, CDNs, and Microsoft/Google services to reduce false positives.
+- **Evidence-driven Verdicts**: Every verdict includes scored evidence items with detailed explanations, ensuring transparency beyond simple numbers.
+- **Scoring System**: A 0–100 scale where higher values indicate greater danger. Thresholds: Low (0–20), Medium (21–45), High (46–75), and Critical (76–100).
+- **LLM-enhanced Narrative Reports**: On-demand AI-generated threat intelligence reports with contextual analysis, powered by OpenAI-compatible APIs. Includes AI/Template badges.
+- **Domain Correlation**: Combines rDNS domain extraction with VirusTotal passive DNS resolutions for comprehensive infrastructure mapping.
+- **Bilingual i18n (EN/ZH)**: Full internationalization support for the Web UI, CLI output, and reports. Includes a language switcher in the web interface.
+- **4 Input Modes**: Supports CLI commands, REST API, Web Dashboard, and CSV Batch processing.
+- **5 Output Formats**: Rich CLI (via `rich`), JSON, Markdown, HTML fragments, and Narrative HTML reports.
+- **Docker Deployment**: Production-ready Docker Compose setup with Nginx reverse proxy, health checks, and SQLite cache volumes.
+- **Context-aware Analysis**: Optional context (port, direction, hostname, process) for enhanced verdict accuracy.
+- **Externalized Rules**: YAML configuration files for scoring rules, action rules, and the service catalog—no code changes required for tuning.
+- **Fault-tolerant**: Graceful degradation ensures the system remains functional even when individual collectors fail.
+- **SQLite Caching**: Configurable TTL-based caching for API responses to improve performance and reduce API quota usage.
 
-# 创建虚拟环境（推荐使用uv）
-uv venv
-source .venv/bin/activate  # 或在Windows: .venv\Scripts\activate
+## Architecture Overview
 
-# 安装依赖
-uv pip install -r requirements.txt
+```
+Input Layer (CLI / API / Web UI / Batch)
+         ↓
+  Query Orchestration (QueryEngine)
+         ↓
+Collectors → Normalizers → Enrichers → Analyzers → Verdict → Reporters
+     ↑           ↑            ↑           ↑          ↑         ↑
+ External    IP/Domain     Semantic    Multi-layer  Evidence  Multi-format
+ Sources     Normalize     Tags        Analysis     Fusion    Output
 ```
 
-### 2. 配置
+### Deployment Architecture
 
-复制环境文件并设置API密钥：
+```
+User Browser / API Client
+         │
+         ▼
+┌──────────────────┐
+│   Nginx :80      │  Reverse proxy, security headers
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│   TIRE :8000     │  FastAPI + Uvicorn
+│                  │  Web UI + REST API + Health checks
+└────────┬─────────┘
+         │
+         ▼
+   SQLite Cache (Docker Volume)
+```
+
+## Quick Start
+
+### Local Development
+
+```bash
+git clone <repository-url>
+cd ipit
+
+# Create virtual environment (uv recommended)
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install dependencies
+uv pip install -r requirements.txt
+
+# Configure
+cp .env.example .env
+# Edit .env with your API keys
+
+# Run CLI
+uv run python -m app.main lookup 8.8.8.8
+
+# Start Web UI
+uv run uvicorn app.api:app --reload
+# Open http://127.0.0.1:8000/
+```
+
+### Docker Deployment (Recommended for Production)
 
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，添加您的API密钥（可选，但推荐）
+# Edit .env with your API keys
+docker compose up -d
+# Open http://localhost/
 ```
 
-### 3. 运行
+## Usage
 
-#### CLI 快速测试
-```bash
-uv run python -m app.main lookup 8.8.8.8
-```
+### CLI Commands
 
-#### 启动Web界面
-```bash
-uv run uvicorn app.api:app --reload
-# 访问 http://127.0.0.1:8000/
-```
+TIRE provides four primary commands, all supporting `--format` (json/md/cli), `--lang` (en/zh), and `--refresh` (to bypass cache).
 
-#### 启动API服务器
-```bash
-uv run uvicorn app.api:app --reload
-# API文档: http://127.0.0.1:8000/docs
-```
+- `lookup`: Quick IP lookup.
+  ```bash
+  uv run python -m app.main lookup 1.1.1.1 --format cli
+  ```
+- `report`: Generate a detailed report.
+  ```bash
+  uv run python -m app.main report 8.8.8.8 --format md --output report.md
+  ```
+- `analyze`: Contextual analysis.
+  ```bash
+  uv run python -m app.main analyze 192.168.1.1 --direction outbound --port 443
+  ```
+- `batch`: Process multiple observables from a CSV file.
+  ```bash
+  uv run python -m app.main batch ips.csv --format json
+  ```
 
-## 📋 工具能力
+### REST API Endpoints
 
-TIRE 不是简单的声誉检查器，它提供：
+- `GET  /healthz` — Health check.
+- `GET  /readyz` — Readiness check.
+- `GET  /api/v1/ip/{ip}` — Quick IP lookup.
+- `POST /api/v1/analyze/ip` — Contextual analysis.
+- `GET  /api/v1/debug/sources/{ip}` — Debug raw source data.
+- `POST /api/v1/report/generate` — Generate narrative report.
+- `GET  /` — Web dashboard.
+- `POST /analyze` — Web form submission.
 
-- **多源情报收集**：整合9个外部威胁情报源（AbuseIPDB、OTX、GreyNoise、VirusTotal等）
-- **语义服务识别**：识别云服务、CDN、Microsoft/Google服务等，减少误报
-- **上下文感知分析**：考虑端口、方向、主机名、进程等上下文信息
-- **可解释的判决**：提供证据、分数调整、语义标签和建议行动
-- **多层分析**：声誉、噪音、上下文、内部遥测分析
-- **多种输出格式**：CLI、JSON、Markdown、HTML、Web界面
-- **批量处理**：支持CSV批量分析
-- **缓存机制**：SQLite缓存提升性能
-- **规则外部化**：YAML配置文件驱动的评分和行动规则
-
-典型输出判决：
-- Low / Medium / High / Critical
-- Benign Service / Internet Noise / Needs Context / Inconclusive
-
-## 🎯 使用方法
-
-### CLI 使用
-
-#### 基本IP查询
-```bash
-uv run python -m app.main lookup 8.8.8.8
-```
-
-#### 生成报告
-```bash
-# Markdown格式
-uv run python -m app.main report 8.8.8.8 --format md --output report.md
-
-# JSON格式
-uv run python -m app.main report 8.8.8.8 --format json
-```
-
-#### 上下文感知分析
-```bash
-uv run python -m app.main analyze 8.8.8.8 \
-  --direction outbound \
-  --port 443 \
-  --hostname example.com \
-  --process chrome.exe
-```
-
-#### 批量分析
-```bash
-uv run python -m app.main batch observables.csv --format json --output results.json
-```
-
-### API 使用
-
-#### 健康检查
-```bash
-curl http://localhost:8000/healthz
-```
-
-#### IP分析
+Example lookup with curl:
 ```bash
 curl http://localhost:8000/api/v1/ip/8.8.8.8
 ```
 
-#### 上下文分析
-```bash
-curl -X POST http://localhost:8000/api/v1/analyze/ip \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ip": "8.8.8.8",
-    "context": {
-      "direction": "outbound",
-      "port": 53,
-      "protocol": "udp"
-    }
-  }'
+### Web Dashboard
+
+Access the dashboard at `http://localhost/`. Enter an IP address and click **Analyze** to see color-coded results with evidence. Click **Generate Report** for an AI-powered narrative report. Use the language switcher in the navbar to toggle between English and Chinese.
+
+## Configuration
+
+### Environment Variables
+
+Grouped by category in `.env`:
+
+**API Keys**
+- `ABUSEIPDB_API_KEY`: API key for AbuseIPDB.
+- `OTX_API_KEY`: API key for AlienVault OTX.
+- `GREYNOISE_API_KEY`: API key for GreyNoise.
+- `VT_API_KEY`: API key for VirusTotal.
+- `SHODAN_API_KEY`: API key for Shodan.
+
+**Performance**
+- `CACHE_TTL_HOURS`: Cache duration (default: 24).
+- `HTTP_TIMEOUT_SECONDS`: Request timeout (default: 15).
+- `MAX_RETRIES`: Number of retries for failed requests (default: 2).
+
+**Application**
+- `LOG_LEVEL`: Logging level (default: INFO).
+- `LANGUAGE`: Default system language (default: en).
+- `TIRE_PORT`: Port for Nginx (default: 80).
+
+**LLM (for narrative reports)**
+- `LLM_API_KEY`: API key for the LLM provider.
+- `LLM_MODEL`: Model name (default: gpt-4o).
+- `LLM_BASE_URL`: API base URL (default: https://api.openai.com/v1).
+
+### Rule Files
+
+- `rules/scoring_rules.yaml`: Reputation scoring weights and thresholds.
+- `rules/action_rules.yaml`: Recommended action mappings based on verdicts.
+- `rules/service_catalog.yaml`: Known service identification patterns.
+
+## Project Structure
+
+```
+├── app/                    # Application core
+│   ├── api.py              # FastAPI routes + Web UI
+│   ├── main.py             # CLI entry point (Typer)
+│   ├── config.py           # Pydantic settings
+│   ├── i18n.py             # Internationalization
+│   ├── query_engine.py     # Pipeline orchestration
+│   └── llm_client.py       # LLM API client
+├── collectors/             # 9 threat intelligence collectors
+│   ├── base.py             # BaseCollector ABC
+│   ├── abuseipdb.py, otx.py, greynoise.py, virustotal.py
+│   ├── shodan.py, rdap.py, reverse_dns.py
+│   ├── honeynet.py, internal_flow.py
+│   └── aggregator.py       # Concurrent collector execution
+├── normalizers/            # Data standardization
+├── enrichers/              # Semantic tagging
+├── analyzers/              # Multi-layer analysis
+│   ├── reputation_engine.py
+│   └── verdict.py          # Evidence fusion + final verdict
+├── reporters/              # Output formatters
+│   ├── narrative_reporter.py  # LLM narrative reports
+│   └── json, markdown, cli, html reporters
+├── models/                 # Pydantic data models
+├── rules/                  # YAML rule files
+├── templates/              # Jinja2 HTML templates
+├── locales/                # i18n translation files (en.json, zh.json)
+├── docker-compose.yml
+├── Dockerfile
+├── nginx/nginx.conf
+└── requirements.txt
 ```
 
-### Web界面使用
+## Design Principles
 
-1. 启动服务器：`uv run uvicorn app.api:app --reload`
-2. 打开浏览器访问 `http://127.0.0.1:8000/`
-3. 输入IP地址，点击"Analyze IP"
-4. 查看Bootstrap样式的分析结果
+1. **Collectors do not score**: Collectors only gather data and do not perform final scoring.
+2. **All scoring in Analyzers**: Scoring logic is centralized within the analyzer components.
+3. **Analyzers emit evidence**: Every analyzer must produce evidence items for its findings.
+4. **Semantic tag driven**: Use YAML rules to drive semantic tagging whenever possible.
+5. **Fault tolerance**: The query orchestration must tolerate failures from individual collectors.
+6. **Reporters have no business logic**: Reporters are responsible for presentation only and contain no business logic.
+7. **Optional context**: Contextual analysis must remain optional for all lookups.
+8. **Batch fault tolerance**: Batch processing must be resilient to individual item failures.
+9. **No sensitive config in logs**: Never print sensitive configurations or API keys in logs.
+10. **Allow inconclusive output**: The engine must support and handle inconclusive or uncertain results.
 
-## 📊 示例输出
+## Testing
 
-### CLI 输出示例
-```
-Threat Intelligence Analysis for 8.8.8.8
-======================================
-
-Verdict: Low
-Summary: Google Public DNS - Known benign infrastructure
-Confidence: 95.0%
-
-Evidence:
-✓ Google service identified via reverse DNS (dns.google)
-✓ Low reputation score from multiple sources
-✓ No malicious activity detected
-
-Recommended Action: Allow - Benign infrastructure
-```
-
-### API 响应示例
-```json
-{
-  "object_type": "ip",
-  "object_value": "8.8.8.8",
-  "level": "Low",
-  "summary": "Google Public DNS - Known benign infrastructure",
-  "confidence": 0.95,
-  "final_score": 15,
-  "tags": ["cloud_provider", "google_service", "dns"],
-  "decision": "allow",
-  "evidence": [...]
-}
-```
-
-## ⚙️ 高级配置
-
-### 环境变量
-
-```env
-# API密钥（可选）
-ABUSEIPDB_API_KEY=your_key_here
-OTX_API_KEY=your_key_here
-GREYNOISE_API_KEY=your_key_here
-VT_API_KEY=your_key_here
-SHODAN_API_KEY=your_key_here
-
-# 性能设置
-CACHE_TTL_HOURS=24
-HTTP_TIMEOUT_SECONDS=15
-MAX_RETRIES=2
-LOG_LEVEL=INFO
-```
-
-### 自定义规则
-
-编辑 `rules/` 目录下的YAML文件来自定义：
-- `scoring_rules.yaml`: 评分规则
-- `action_rules.yaml`: 行动规则
-- `service_catalog.yaml`: 服务目录
-
-## 🧪 测试
-
-运行测试套件：
 ```bash
 uv run pytest
 ```
 
-推荐测试类别：
-- 模型验证
-- 收集器解析
-- 标准化输出
-- 语义标签
-- 声誉评分
-- 判决生成
-- API端点测试
+## Roadmap
 
-## 🏗️ 架构概览
+v2.0 will introduce a plugin architecture — see `docs/V2_PLUGIN_ARCHITECTURE.md`.
 
+## License
+
+Internal use. See LICENSE for details.
+
+---
+
+# TIRE — 威胁情报推理引擎
+
+多源威胁情报分析与推理引擎，支持证据驱动的判决、语义服务识别以及 LLM 增强的叙述性报告。
+
+## 核心功能
+
+- **9 个情报源**：AbuseIPDB, AlienVault OTX, GreyNoise, VirusTotal (含 passive DNS), Shodan, RDAP, Reverse DNS, Honeynet, Internal Flow。
+- **多层分析流水线**：收集器 → 标准化器 → 丰富器 → 分析器 → 判决 → 报告器。
+- **语义服务识别**：基于 YAML 的服务目录，识别云厂商、CDN 及 Microsoft/Google 服务，减少误报。
+- **证据驱动判决**：每个判决均包含带分数的证据项及详细说明，而非单一数字。
+- **评分系统**：0–100 分制。阈值：低 (0–20), 中 (21–45), 高 (46–75), 严重 (76–100)。
+- **LLM 增强报告**：按需生成 AI 威胁情报报告，支持上下文分析，由 OpenAI 兼容 API 驱动。
+- **域名关联**：结合 rDNS 提取与 VirusTotal passive DNS 解析，进行基础设施映射。
+- **双语支持 (EN/ZH)**：Web UI、CLI 输出及报告全面支持中英文切换。
+- **4 种输入模式**：CLI、REST API、Web 仪表板、CSV 批量处理。
+- **5 种输出格式**：Rich CLI, JSON, Markdown, HTML 片段, 叙述性 HTML 报告。
+- **Docker 部署**：生产就绪的 Docker Compose 配置，含 Nginx 反向代理与健康检查。
+- **上下文感知**：支持端口、方向、主机名、进程等可选上下文，提升判决准确度。
+- **规则外部化**：通过 YAML 配置评分规则、行动规则和服务目录，无需修改代码。
+- **容错机制**：单个收集器失败时保持系统整体可用。
+- **SQLite 缓存**：基于 TTL 的缓存机制，提升性能并节省 API 配额。
+
+## 快速开始
+
+### 本地开发
+```bash
+git clone <repository-url>
+cd ipit
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+cp .env.example .env
+uv run python -m app.main lookup 8.8.8.8
 ```
-输入层 (CLI/API/Web/Batch)
-    ↓
-查询编排 (QueryEngine)
-    ↓
-收集器 → 标准化器 → 丰富器 → 分析器 → 判决 → 报告器
-    ↑           ↑          ↑         ↑        ↑       ↑
-外部源    IP/域名规范  语义标签   多层分析  证据融合  多格式输出
+
+### Docker 部署
+```bash
+docker compose up -d
 ```
 
-## 📚 设计原则
+## 设计原则
 
-1. **收集器不评分**：收集器仅收集数据，不进行最终评分
-2. **所有评分在分析器中**：评分逻辑集中在分析器组件
-3. **分析器发出证据**：所有分析器必须发出证据项
-4. **语义标签驱动**：尽可能使用YAML规则驱动语义标签
-5. **容错性**：查询编排必须容忍部分收集器失败
-6. **报告器无业务逻辑**：报告器仅负责呈现，不包含业务逻辑
-7. **上下文可选**：上下文分析必须是可选的
-8. **批量容错**：批量分析必须是项目级容错的
-9. **敏感配置不打印**：永远不要在日志中打印敏感配置
-10. **允许不确定输出**：引擎必须允许不确定的输出
-
-## 🔄 开发状态
-
-✅ 已完成 Sprint 0-11：
-- MVP核心功能（收集、标准化、分析、报告）
-- 高级功能（缓存、规则外部化、上下文分析、图相关性）
-- Web界面和仪表板
-
-🚧 进行中 Sprint 12：
-- 生产级强化（日志、指标、验证、限速）
-
-## 📝 许可证与注意事项
-
-本项目旨在防御性安全分析、SOC分流、威胁狩猎支持和可解释的威胁情报推理。
-
-它不应被实现为单源黑名单查找工具。其核心价值在于：
-- 多源情报融合
-- 语义误报减少
-- 上下文感知风险推理
-- 可解释的证据驱动判决
-
+1. **收集器不评分**：收集器仅负责数据采集。
+2. **评分集中在分析器**：所有评分逻辑均在分析器中实现。
+3. **分析器输出证据**：每个分析结果必须附带证据项。
+4. **语义标签驱动**：优先使用 YAML 规则定义语义标签。
+5. **容错性**：查询引擎必须能够处理部分收集器的失效。
+6. **报告器无业务逻辑**：报告器仅负责数据展示。
+7. **上下文可选**：上下文分析不应作为强制要求。
+8. **批量容错**：批量处理不应因单个条目失败而中断。
+9. **敏感配置保护**：严禁在日志中打印 API 密钥等敏感信息。
+10. **允许不确定性**：引擎应能处理并输出不确定的分析结果。
