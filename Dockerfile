@@ -46,7 +46,7 @@ COPY config/ ./config/
 COPY admin/ ./admin/
 
 # Create directories for runtime data
-RUN mkdir -p /app/data && chown -R tire:tire /app
+RUN mkdir -p /app/data /app/admin && chown -R tire:tire /app
 
 # Switch to non-root user
 USER tire

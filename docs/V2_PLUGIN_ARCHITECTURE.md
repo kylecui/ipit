@@ -548,10 +548,10 @@ By making each plugin responsible for its own normalization and scoring, we foll
 
 ### Why filesystem discovery over stevedore/entry_points?
 
-- TIRE is an internal tool, not a library ecosystem
-- Filesystem discovery (`importlib` + `__subclasses__()`) works with zero additional dependencies
+- TIRE prioritizes simplicity — filesystem discovery requires zero additional dependencies
+- Filesystem discovery (`importlib` + `inspect`) works out of the box
 - No pip packaging overhead — just drop a `.py` file
-- If TIRE ever needs distributable plugins (pip-installable), `entry_points` or `stevedore` can be added as an alternative discovery mechanism alongside filesystem scanning
+- For distributable plugins (pip-installable), `entry_points` or `stevedore` can be added as an alternative discovery mechanism alongside filesystem scanning
 
 ### Why YAML config over database?
 
@@ -652,8 +652,158 @@ No need to spin up the full pipeline. Plugin tests are fast and focused.
 ## 8. Non-Goals (Explicitly Out of Scope for v2.0)
 
 - **Plugin marketplace / remote installation** — plugins are local files, not downloaded packages
-- **Plugin sandboxing / security isolation** — plugins run in the same process with full trust
 - **Multi-language plugin support** — Python only
 - **Hot-reload** — adding/removing plugins requires a restart (hot-reload is a v2.1+ consideration)
 - **Breaking API contract** — v2.0 REST API responses remain backward-compatible with v1.0
 - **Observable type expansion** — v2.0 focuses on the plugin architecture, not adding domain/URL/hash analysis pipelines (though the plugin interface supports them)
+
+> **Note**: Plugin sandboxing (subprocess-based isolation) is implemented in v2.0 to ensure a single plugin crash or misbehavior cannot affect the platform's overall stability or security.
+
+---
+
+## 9. Plugin Sandboxing
+
+### 9.1 Overview
+
+Community plugins run in **isolated subprocesses** to prevent a single plugin from crashing the platform, leaking secrets, or consuming unbounded resources. Builtin plugins (shipped with TIRE) run in-process for zero overhead.
+
+```
+QueryEngine._safe_query()
+        │
+        ├─ is_sandboxed? → NO  → plugin.query() in-process (builtin)
+        │
+        └─ is_sandboxed? → YES → SandboxedPluginRunner.run()
+                                        │
+                                        ▼
+                            asyncio.create_subprocess_exec
+                                  (python _subprocess_worker.py)
+                                        │
+                                  stdin  │  stdout
+                              ┌─────────┼──────────┐
+                              │  JSON   │  JSON    │
+                              │ request │ response │
+                              └─────────┼──────────┘
+                                        │
+                                  _subprocess_worker.py
+                                  ├─ Apply memory limit (Linux)
+                                  ├─ Import plugin module
+                                  ├─ plugin.configure(config)
+                                  ├─ plugin.query(observable, obs_type)
+                                  └─ Serialize PluginResult → JSON
+```
+
+### 9.2 Trust Boundary
+
+| Origin Directory | Default Trust | Sandbox | Override |
+|---|---|---|---|
+| `plugins/builtin/` | Trusted | No (in-process) | Set `sandboxed: true` in plugins.yaml |
+| `plugins/community/` | Untrusted | Yes (subprocess) | Set `sandboxed: false` in plugins.yaml |
+
+The registry determines sandbox status via `PluginRegistry.is_sandboxed()`:
+1. Explicit `sandboxed` setting in `config/plugins.yaml` takes precedence
+2. Otherwise, default by origin directory (`community/` → sandboxed, `builtin/` → not)
+
+### 9.3 Isolation Guarantees
+
+| Threat | Mitigation |
+|---|---|
+| **Plugin crash / exception** | Subprocess exits with error; main process unaffected. Returns `PluginResult(ok=False)`. |
+| **Infinite loop / hang** | `asyncio.wait_for()` enforces timeout. On timeout, subprocess is killed via `proc.kill()` + `proc.wait()` (no zombies). |
+| **Memory exhaustion** | `resource.setrlimit(RLIMIT_AS)` caps memory on Linux. (Windows: not enforced — documented limitation.) |
+| **Secret leakage** | Subprocess receives only system essentials (`PATH`, `HOME`, etc.) + the plugin's own API key env var. Other plugins' keys, `LLM_API_KEY`, `SESSION_SECRET_KEY` are NOT passed. |
+| **Ctrl+C propagation** | Windows: `CREATE_NEW_PROCESS_GROUP` flag prevents Ctrl+C in the parent from killing the child unexpectedly. |
+| **Stdout pollution** | Worker redirects all logging to stderr. Only JSON result goes to stdout. Parent captures stderr at DEBUG level. |
+
+### 9.4 Configuration
+
+Per-plugin sandbox settings in `config/plugins.yaml`:
+
+```yaml
+plugins:
+  my_community_plugin:
+    enabled: true
+    # sandboxed: true        # Default for community/ plugins — explicit override available
+    timeout: 30              # Seconds before the sandbox kills the plugin (default: 30)
+    memory_limit_mb: 512     # Max memory in MB, Linux only (default: 512)
+    config:
+      my_setting: value
+```
+
+#### Settings Reference
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `sandboxed` | bool | auto (by origin dir) | Force sandbox on/off for this plugin |
+| `timeout` | int | 30 | Seconds before subprocess is killed |
+| `memory_limit_mb` | int | 512 | Memory limit in MB (Linux only, via `RLIMIT_AS`) |
+
+### 9.5 IPC Protocol
+
+Communication between parent and child process uses JSON over stdin/stdout:
+
+**Request (parent → child via stdin):**
+```json
+{
+  "plugin_module": "plugins.community.example_plugin",
+  "plugin_class": "ThreatFoxPlugin",
+  "observable": "8.8.8.8",
+  "obs_type": "ip",
+  "config": {"timeout_seconds": 10},
+  "env_vars": {"PATH": "...", "HOME": "..."},
+  "memory_limit_mb": 512
+}
+```
+
+**Success response (child → parent via stdout):**
+```json
+{
+  "ok": true,
+  "result": {
+    "source": "example_threatfox",
+    "ok": true,
+    "raw_data": {"ioc_count": 2, "...": "..."},
+    "normalized_data": null,
+    "evidence": [
+      {
+        "source": "example_threatfox",
+        "category": "reputation",
+        "severity": "medium",
+        "title": "Malware association",
+        "detail": "...",
+        "score_delta": 20,
+        "confidence": 0.7,
+        "raw": {}
+      }
+    ],
+    "error": null
+  }
+}
+```
+
+**Error response (child → parent via stdout):**
+```json
+{
+  "ok": false,
+  "error": "Class 'BadPlugin' not found in module 'plugins.community.bad'",
+  "traceback": "Traceback (most recent call last):\n  ..."
+}
+```
+
+### 9.6 Implementation Files
+
+| File | Role |
+|---|---|
+| `plugins/sandbox.py` | `SandboxedPluginRunner` — spawns subprocess, handles timeout/kill, parses JSON result |
+| `plugins/_subprocess_worker.py` | Child process entry point — applies limits, imports plugin, runs query, serializes result |
+| `plugins/registry.py` | `is_sandboxed()` and `get_sandbox_config()` — determines sandbox routing |
+| `app/query_engine.py` | `_safe_query()` — routes to sandbox or in-process based on registry |
+
+### 9.7 Known Limitations
+
+1. **Windows memory limits**: `resource.setrlimit(RLIMIT_AS)` is Linux-only. On Windows, memory limits are not enforced. A future enhancement could use `pywin32` Job Objects.
+
+2. **Import-time side effects**: Community plugins are still imported in-process during `PluginRegistry.discover()` (via `importlib.import_module`). A malicious plugin with import-time side effects could still affect the main process at startup. A future improvement (v2.1+) would probe plugin metadata via subprocess at discovery time.
+
+3. **No network isolation**: Sandboxed plugins can still make arbitrary network requests. Network egress filtering is outside TIRE's scope — use OS-level firewalls or container networking if needed.
+
+4. **Serialization constraint**: `PluginResult` and `EvidenceItem` must be JSON-serializable for the IPC protocol. Plugins cannot return complex Python objects (functions, generators, etc.) in their results.

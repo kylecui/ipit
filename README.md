@@ -7,7 +7,7 @@ A multi-source threat intelligence analysis and reasoning engine for IP observab
 ## Key Features
 
 - **9 Intelligence Sources**: AbuseIPDB, AlienVault OTX, GreyNoise, VirusTotal (including passive DNS/resolutions), Shodan, RDAP, Reverse DNS, Honeynet, and Internal Flow.
-- **Multi-layer Analysis Pipeline**: A structured flow from Collectors → Normalizers → Enrichers → Analyzers → Verdict → Reporters.
+- **Plugin-based Analysis Pipeline**: A structured flow from Plugins → Enrichers → Analyzers → Verdict → Reporters.
 - **Semantic Service Recognition**: YAML-driven service catalog identifies cloud providers, CDNs, and Microsoft/Google services to reduce false positives.
 - **Evidence-driven Verdicts**: Every verdict includes scored evidence items with detailed explanations, ensuring transparency beyond simple numbers.
 - **Scoring System**: A 0–100 scale where higher values indicate greater danger. Thresholds: Low (0–20), Medium (21–45), High (46–75), and Critical (76–100).
@@ -16,7 +16,9 @@ A multi-source threat intelligence analysis and reasoning engine for IP observab
 - **Bilingual i18n (EN/ZH)**: Full internationalization support for the Web UI, CLI output, and reports. Includes a language switcher in the web interface.
 - **4 Input Modes**: Supports CLI commands, REST API, Web Dashboard, and CSV Batch processing.
 - **5 Output Formats**: Rich CLI (via `rich`), JSON, Markdown, HTML fragments, and Narrative HTML reports.
-- **Docker Deployment**: Production-ready Docker Compose setup with Nginx reverse proxy, health checks, and SQLite cache volumes.
+- **Docker Deployment**: Production-ready Docker Compose setup with health checks and persistent SQLite volumes for cache and admin data.
+- **Open Plugin Platform**: Builtin and community plugins can be added without modifying core platform code.
+- **Sandboxed Community Plugins**: Untrusted/community plugins run in isolated subprocesses to protect platform stability and secrets.
 - **Context-aware Analysis**: Optional context (port, direction, hostname, process) for enhanced verdict accuracy.
 - **Externalized Rules**: YAML configuration files for scoring rules, action rules, and the service catalog—no code changes required for tuning.
 - **Fault-tolerant**: Graceful degradation ensures the system remains functional even when individual collectors fail.
@@ -29,10 +31,10 @@ Input Layer (CLI / API / Web UI / Batch)
          ↓
   Query Orchestration (QueryEngine)
          ↓
-Collectors → Normalizers → Enrichers → Analyzers → Verdict → Reporters
-     ↑           ↑            ↑           ↑          ↑         ↑
- External    IP/Domain     Semantic    Multi-layer  Evidence  Multi-format
- Sources     Normalize     Tags        Analysis     Fusion    Output
+Plugins → Enrichers → Analyzers → Verdict → Reporters
+   ↑           ↑            ↑          ↑         ↑
+Dynamic    Semantic    Multi-layer  Evidence  Multi-format
+Sources    Tags        Analysis     Fusion    Output
 ```
 
 ### Deployment Architecture
@@ -42,17 +44,13 @@ User Browser / API Client
          │
          ▼
 ┌──────────────────┐
-│   Nginx :80      │  Reverse proxy, security headers
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
 │   TIRE :8000     │  FastAPI + Uvicorn
 │                  │  Web UI + REST API + Health checks
 └────────┬─────────┘
          │
-         ▼
-   SQLite Cache (Docker Volume)
+         ├──────────────► SQLite Cache (Docker Volume)
+         │
+         └──────────────► Admin DB (Docker Volume)
 ```
 
 ## Quick Start
@@ -88,7 +86,7 @@ uv run uvicorn app.api:app --reload
 cp .env.example .env
 # Edit .env with your API keys
 docker compose up -d
-# Open http://localhost/
+# Open http://localhost:8000/
 ```
 
 ## Usage
@@ -132,7 +130,7 @@ curl http://localhost:8000/api/v1/ip/8.8.8.8
 
 ### Web Dashboard
 
-Access the dashboard at `http://localhost/`. Enter an IP address and click **Analyze** to see color-coded results with evidence. Click **Generate Report** for an AI-powered narrative report. Use the language switcher in the navbar to toggle between English and Chinese.
+Access the dashboard at `http://localhost:8000/`. Enter an IP address and click **Analyze** to see color-coded results with evidence. Click **Generate Report** for an AI-powered narrative report. Use the language switcher in the navbar to toggle between English and Chinese.
 
 ## Configuration
 
@@ -155,7 +153,7 @@ Grouped by category in `.env`:
 **Application**
 - `LOG_LEVEL`: Logging level (default: INFO).
 - `LANGUAGE`: Default system language (default: en).
-- `TIRE_PORT`: Port for Nginx (default: 80).
+- `TIRE_PORT`: Port for the application (default: 8000).
 
 **LLM (for narrative reports)**
 - `LLM_API_KEY`: API key for the LLM provider.
@@ -178,12 +176,12 @@ Grouped by category in `.env`:
 │   ├── i18n.py             # Internationalization
 │   ├── query_engine.py     # Pipeline orchestration
 │   └── llm_client.py       # LLM API client
-├── collectors/             # 9 threat intelligence collectors
-│   ├── base.py             # BaseCollector ABC
-│   ├── abuseipdb.py, otx.py, greynoise.py, virustotal.py
-│   ├── shodan.py, rdap.py, reverse_dns.py
-│   ├── honeynet.py, internal_flow.py
-│   └── aggregator.py       # Concurrent collector execution
+├── plugins/                # Plugin platform
+│   ├── base.py             # TIPlugin ABC + PluginResult
+│   ├── registry.py         # Discovery + registration
+│   ├── sandbox.py          # Subprocess sandbox runner
+│   ├── builtin/            # Trusted built-in plugins
+│   └── community/          # Community/demo plugins
 ├── normalizers/            # Data standardization
 ├── enrichers/              # Semantic tagging
 ├── analyzers/              # Multi-layer analysis
@@ -204,16 +202,17 @@ Grouped by category in `.env`:
 
 ## Design Principles
 
-1. **Collectors do not score**: Collectors only gather data and do not perform final scoring.
+1. **Plugins are self-contained**: Plugins gather source data and emit evidence through a stable plugin contract.
 2. **All scoring in Analyzers**: Scoring logic is centralized within the analyzer components.
 3. **Analyzers emit evidence**: Every analyzer must produce evidence items for its findings.
 4. **Semantic tag driven**: Use YAML rules to drive semantic tagging whenever possible.
 5. **Fault tolerance**: The query orchestration must tolerate failures from individual collectors.
 6. **Reporters have no business logic**: Reporters are responsible for presentation only and contain no business logic.
-7. **Optional context**: Contextual analysis must remain optional for all lookups.
-8. **Batch fault tolerance**: Batch processing must be resilient to individual item failures.
-9. **No sensitive config in logs**: Never print sensitive configurations or API keys in logs.
-10. **Allow inconclusive output**: The engine must support and handle inconclusive or uncertain results.
+7. **Sandbox untrusted plugins**: Community plugins must not be able to crash or compromise the platform.
+8. **Optional context**: Contextual analysis must remain optional for all lookups.
+9. **Batch fault tolerance**: Batch processing must be resilient to individual item failures.
+10. **No sensitive config in logs**: Never print sensitive configurations or API keys in logs.
+11. **Allow inconclusive output**: The engine must support and handle inconclusive or uncertain results.
 
 ## Testing
 
@@ -223,11 +222,11 @@ uv run pytest
 
 ## Roadmap
 
-v2.0 will introduce a plugin architecture — see `docs/V2_PLUGIN_ARCHITECTURE.md`.
+v2.0 introduced the plugin architecture with sandboxed execution — see `docs/V2_PLUGIN_ARCHITECTURE.md`.
 
 ## License
 
-Internal use. See LICENSE for details.
+Open source. See LICENSE for details.
 
 ---
 

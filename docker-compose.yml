@@ -9,16 +9,19 @@ services:
     volumes:
       # 持久化缓存数据库（避免每次重启丢失缓存）
       - tirev2-cache:/app/cache
+      # 持久化管理后台数据库（用户、LLM 配置、审计日志）
+      - tirev2-admin:/app/admin
       # 挂载规则文件（方便热更新规则而无需重建镜像）
       - ./rules:/app/rules:ro
     networks:
       - tirev2-net
-    # 不直接暴露端口，通过 v1 的 Nginx 反代访问 (/v2)
-    expose:
-      - "8000"
+    ports:
+      - "${TIRE_PORT:-8000}:8000"
 
 volumes:
   tirev2-cache:
+    driver: local
+  tirev2-admin:
     driver: local
 
 networks:
