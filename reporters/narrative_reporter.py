@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
+from app.config import settings
 from app.i18n import i18n
 from app.llm_client import llm_client
 from models import Verdict
@@ -43,6 +44,7 @@ class NarrativeReporter:
         verdict: Verdict,
         lang: str = "en",
         llm_overrides: Optional[Dict[str, Any]] = None,
+        query_date: Optional[datetime] = None,
     ) -> str:
         """
         Generate a detailed narrative report.
@@ -52,6 +54,9 @@ class NarrativeReporter:
             lang: Language code ("en" or "zh")
             llm_overrides: Per-user LLM settings dict with optional
                            api_key, model, base_url keys
+            query_date: When the underlying data was queried. If provided,
+                        the report includes a staleness warning when the
+                        data is older than the configured threshold.
 
         Returns:
             Complete HTML page string
@@ -82,6 +87,22 @@ class NarrativeReporter:
         template = self.env.get_template("narrative_report.html.j2")
         t = i18n.get_translator(lang)
 
+        # Timestamp handling
+        now = datetime.now()
+        report_generated_at = now.strftime("%Y-%m-%d %H:%M:%S")
+        query_date_str = (
+            query_date.strftime("%Y-%m-%d %H:%M:%S") if query_date else None
+        )
+
+        # Staleness calculation
+        staleness_days = settings.result_staleness_days
+        is_stale = False
+        days_old = 0
+        if query_date:
+            delta = now - query_date
+            days_old = delta.days
+            is_stale = days_old >= staleness_days
+
         return template.render(
             verdict=verdict,
             source_data=source_data,
@@ -90,7 +111,12 @@ class NarrativeReporter:
             llm_enhanced=llm_enhanced,
             t=t,
             lang=lang,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=report_generated_at,
+            query_date=query_date_str,
+            report_generated_at=report_generated_at,
+            is_stale=is_stale,
+            staleness_days=staleness_days,
+            days_old=days_old,
         )
 
     # ------------------------------------------------------------------

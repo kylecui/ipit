@@ -115,6 +115,20 @@
         /* Info table */
         .info-table td { padding: 0.35rem 0.75rem; font-size: 0.9rem; }
         .info-table td:first-child { color: #6c757d; white-space: nowrap; width: 35%; }
+        /* AIGC Disclaimer */
+        .aigc-disclaimer {
+            background: #fff3cd; border: 1px solid #ffc107; border-radius: 0.5rem;
+            padding: 1rem 1.25rem; margin: 2rem 0 0; font-size: 0.85rem;
+            color: #664d03; line-height: 1.6;
+        }
+        .aigc-disclaimer strong { color: #664d03; }
+        .aigc-disclaimer .aigc-icon { font-size: 1.1rem; margin-right: 0.3rem; }
+        /* Staleness Warning */
+        .staleness-warning {
+            background: #f8d7da; border: 1px solid #f5c2c7; border-radius: 0.5rem;
+            padding: 1rem 1.25rem; margin: 1rem 0; font-size: 0.85rem;
+            color: #842029; line-height: 1.6;
+        }
         /* Footer */
         .report-footer {
             text-align: center; padding: 2rem 0; margin-top: 2rem;
@@ -142,7 +156,11 @@
         <h1>{{ t('narrative.title') }}</h1>
         <div class="subtitle">{{ source_data.ip }}</div>
         <div class="meta">
-            {{ t('narrative.generated_at') }}: {{ timestamp }}
+            {% if query_date %}
+            {{ t('narrative.query_date') }}: {{ query_date }}
+            &nbsp;|&nbsp;
+            {% endif %}
+            {{ t('narrative.report_generated_at') }}: {{ report_generated_at|default(timestamp) }}
             &nbsp;|&nbsp;
             {% if llm_enhanced %}
             <span class="badge badge-llm" title="{{ t('narrative.llm_badge_tip') }}">&#x2728; {{ t('narrative.llm_badge') }}</span>
@@ -155,6 +173,13 @@
 
 <div class="report-container">
 
+<!-- ===== STALENESS WARNING (data older than threshold) ===== -->
+{% if is_stale %}
+<div class="staleness-warning">
+    &#x23F0; {{ t('narrative.staleness_warning').replace('{days}', days_old|string) }}
+</div>
+{% endif %}
+
 <!-- ===== SECTION 1: Scope & Methodology ===== -->
 <div class="section-block">
     <div class="section-num">01</div>
@@ -163,7 +188,10 @@
         <table class="table table-borderless info-table mb-3">
             <tr><td>{{ t('report.type') }}</td><td>{{ verdict.object_type | upper }}</td></tr>
             <tr><td>{{ t('report.value') }}</td><td><strong>{{ source_data.ip }}</strong></td></tr>
-            <tr><td>{{ t('narrative.generated_at') }}</td><td>{{ timestamp }}</td></tr>
+            {% if query_date %}
+            <tr><td>{{ t('narrative.query_date') }}</td><td>{{ query_date }}</td></tr>
+            {% endif %}
+            <tr><td>{{ t('narrative.report_generated_at') }}</td><td>{{ report_generated_at|default(timestamp) }}</td></tr>
         </table>
         <p><strong>{{ t('narrative.sources_queried') }}:</strong></p>
         <div class="mb-2">
@@ -486,11 +514,22 @@
 
 </div><!-- /report-container -->
 
+<!-- ===== AIGC DISCLAIMER (LLM-enhanced reports only) ===== -->
+{% if llm_enhanced %}
+<div class="report-container">
+    <div class="aigc-disclaimer">
+        <span class="aigc-icon">&#x26A0;&#xFE0F;</span>
+        <strong>{{ t('narrative.aigc_disclaimer_short') }}</strong><br>
+        {{ t('narrative.aigc_disclaimer') }}
+    </div>
+</div>
+{% endif %}
+
 <!-- ===== FOOTER ===== -->
 <div class="report-footer">
     <div class="report-container">
         {{ t('narrative.footer') }}<br>
-        {{ t('narrative.generated_at') }}: {{ timestamp }}
+        {{ t('narrative.report_generated_at') }}: {{ report_generated_at|default(timestamp) }}
     </div>
 </div>
 
