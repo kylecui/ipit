@@ -17,8 +17,9 @@ import bcrypt
 
 logger = logging.getLogger(__name__)
 
-# Default DB path relative to project root
-_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "admin", "admin.db")
+# Default DB path — stored under data/ to avoid Docker volume conflicts
+# (Mounting a volume on /app/admin/ would shadow the code directory)
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "admin.db")
 
 
 def _utc_now_iso() -> str:
