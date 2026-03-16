@@ -17,9 +17,9 @@ from starlette.responses import StreamingResponse
 
 from admin.auth import get_current_user, login_redirect
 from admin.database import admin_db
-from admin.log_handler import LogStore
 from app.config import settings
 from app.i18n import i18n
+from storage.result_store import result_store
 
 logger = logging.getLogger(__name__)
 
@@ -782,3 +782,252 @@ async def log_stream(request: Request):
                 yield f"event: log\ndata: {json.dumps(entry)}\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+# ── Plugin API Key Registry ────────────────────────────────────
+# Known built-in plugins and their API key application URLs.
+# This helps users quickly register for API keys.
+
+PLUGIN_API_KEY_REGISTRY: list[dict[str, Any]] = [
+    {
+        "plugin_name": "abuseipdb",
+        "display_name": "AbuseIPDB",
+        "env_var": "ABUSEIPDB_API_KEY",
+        "apply_url": "https://www.abuseipdb.com/account/api",
+        "free_tier": True,
+        "note": "Free tier: 1000 checks/day",
+    },
+    {
+        "plugin_name": "virustotal",
+        "display_name": "VirusTotal",
+        "env_var": "VT_API_KEY",
+        "apply_url": "https://www.virustotal.com/gui/my-apikey",
+        "free_tier": True,
+        "note": "Free tier: 4 lookups/min, 500/day",
+    },
+    {
+        "plugin_name": "otx",
+        "display_name": "AlienVault OTX",
+        "env_var": "OTX_API_KEY",
+        "apply_url": "https://otx.alienvault.com/api",
+        "free_tier": True,
+        "note": "Free, requires registration",
+    },
+    {
+        "plugin_name": "greynoise",
+        "display_name": "GreyNoise",
+        "env_var": "GREYNOISE_API_KEY",
+        "apply_url": "https://viz.greynoise.io/account/api-key",
+        "free_tier": True,
+        "note": "Community API: free, limited features",
+    },
+    {
+        "plugin_name": "shodan",
+        "display_name": "Shodan",
+        "env_var": "SHODAN_API_KEY",
+        "apply_url": "https://account.shodan.io/",
+        "free_tier": True,
+        "note": "Free tier available with limited queries",
+    },
+    {
+        "plugin_name": "threatbook",
+        "display_name": "ThreatBook (微步在线)",
+        "env_var": "THREATBOOK_API_KEY",
+        "apply_url": "https://x.threatbook.com/v5/myApi",
+        "free_tier": True,
+        "note": "Free tier: 50 queries/day",
+    },
+    {
+        "plugin_name": "tianjiyoumeng",
+        "display_name": "TianJi YouMeng (天际友盟)",
+        "env_var": "TIANJIYOUMENG_API_KEY",
+        "apply_url": "https://redqueen.tj-un.com",
+        "free_tier": False,
+        "note": "Enterprise-only, contact service@tj-un.com",
+    },
+]
+
+
+def _get_plugin_key_registry() -> list[dict[str, Any]]:
+    """Return the plugin API key registry with current configuration status."""
+    registry = []
+    for entry in PLUGIN_API_KEY_REGISTRY:
+        info = dict(entry)
+        # Check if env var is configured
+        info["env_configured"] = bool(os.environ.get(entry["env_var"] or ""))
+        registry.append(info)
+    return registry
+
+
+# ── Plugin API Key Management (Admin — Shared Keys) ────────────
+
+
+@router.get("/settings/api-keys", response_class=HTMLResponse)
+async def api_keys_admin_page(request: Request):
+    """Admin page for managing shared plugin API keys and policy."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+    if not user.get("is_admin"):
+        return RedirectResponse(f"{settings.root_path}/admin/", status_code=303)
+
+    shared_keys = result_store.list_plugin_api_keys(user_id=0)
+    shared_keys_allowed = result_store.is_shared_keys_allowed()
+    registry = _get_plugin_key_registry()
+    msg = request.query_params.get("msg", "")
+
+    return templates.TemplateResponse(
+        "admin/api_keys_admin.html.j2",
+        _admin_context(
+            request,
+            user,
+            shared_keys=shared_keys,
+            shared_keys_allowed=shared_keys_allowed,
+            registry=registry,
+            msg=msg,
+        ),
+    )
+
+
+@router.post("/settings/api-keys/shared")
+async def api_keys_admin_save(
+    request: Request,
+    plugin_name: str = Form(...),
+    api_key: str = Form(""),
+):
+    """Save or update a shared (admin) plugin API key."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+
+    if not api_key.strip():
+        return RedirectResponse(
+            f"{settings.root_path}/admin/settings/api-keys?msg=API+key+cannot+be+empty",
+            status_code=303,
+        )
+
+    result_store.save_plugin_api_key(
+        user_id=0, plugin_name=plugin_name, api_key=api_key.strip()
+    )
+    admin_db.log_action(
+        user["id"],
+        "shared_api_key_save",
+        f"Updated shared API key for plugin '{plugin_name}'",
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/api-keys?msg=Shared+API+key+for+{plugin_name}+saved",
+        status_code=303,
+    )
+
+
+@router.post("/settings/api-keys/shared/{plugin_name}/delete")
+async def api_keys_admin_delete(request: Request, plugin_name: str):
+    """Delete a shared (admin) plugin API key."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+
+    result_store.delete_plugin_api_key(user_id=0, plugin_name=plugin_name)
+    admin_db.log_action(
+        user["id"],
+        "shared_api_key_delete",
+        f"Deleted shared API key for plugin '{plugin_name}'",
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/api-keys?msg=Shared+key+for+{plugin_name}+deleted",
+        status_code=303,
+    )
+
+
+@router.post("/settings/api-keys/policy")
+async def api_keys_policy_toggle(request: Request, allow_shared: bool = Form(False)):
+    """Toggle whether regular users may use admin-configured shared keys."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+
+    result_store.set_shared_keys_policy(allow_shared)
+    status = "allowed" if allow_shared else "disallowed"
+    admin_db.log_action(
+        user["id"], "shared_key_policy", f"Shared key usage {status} for regular users"
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/api-keys?msg=Shared+key+policy+updated:+{status}",
+        status_code=303,
+    )
+
+
+# ── Plugin API Key Management (User — Personal Keys) ──────────
+
+
+@router.get("/settings/my-api-keys", response_class=HTMLResponse)
+async def api_keys_user_page(request: Request):
+    """User page for managing personal plugin API keys."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+
+    user_keys = result_store.list_plugin_api_keys(user_id=user["id"])
+    registry = _get_plugin_key_registry()
+    msg = request.query_params.get("msg", "")
+
+    return templates.TemplateResponse(
+        "admin/api_keys_user.html.j2",
+        _admin_context(
+            request,
+            user,
+            user_keys=user_keys,
+            registry=registry,
+            msg=msg,
+        ),
+    )
+
+
+@router.post("/settings/my-api-keys")
+async def api_keys_user_save(
+    request: Request,
+    plugin_name: str = Form(...),
+    api_key: str = Form(""),
+):
+    """Save or update a personal plugin API key for the current user."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+
+    if not api_key.strip():
+        return RedirectResponse(
+            f"{settings.root_path}/admin/settings/my-api-keys?msg=API+key+cannot+be+empty",
+            status_code=303,
+        )
+
+    result_store.save_plugin_api_key(
+        user_id=user["id"], plugin_name=plugin_name, api_key=api_key.strip()
+    )
+    admin_db.log_action(
+        user["id"],
+        "personal_api_key_save",
+        f"Updated personal API key for plugin '{plugin_name}'",
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/my-api-keys?msg=API+key+for+{plugin_name}+saved",
+        status_code=303,
+    )
+
+
+@router.post("/settings/my-api-keys/{plugin_name}/delete")
+async def api_keys_user_delete(request: Request, plugin_name: str):
+    """Delete a personal plugin API key."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+
+    result_store.delete_plugin_api_key(user_id=user["id"], plugin_name=plugin_name)
+    admin_db.log_action(
+        user["id"],
+        "personal_api_key_delete",
+        f"Deleted personal API key for plugin '{plugin_name}'",
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/my-api-keys?msg=API+key+for+{plugin_name}+deleted",
+        status_code=303,
+    )

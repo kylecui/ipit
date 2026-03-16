@@ -89,6 +89,18 @@
                     🤖 {{ t('admin.llm_settings') }}
                 </a>
             </li>
+            {% if user.is_admin %}
+            <li class="nav-item">
+                <a class="nav-link {% block nav_api_keys %}{% endblock %}" href="{{ root_path }}/admin/settings/api-keys">
+                    🔑 {{ t('admin.shared_api_keys') }}
+                </a>
+            </li>
+            {% endif %}
+            <li class="nav-item">
+                <a class="nav-link {% block nav_my_api_keys %}{% endblock %}" href="{{ root_path }}/admin/settings/my-api-keys">
+                    🗝️ {{ t('admin.my_api_keys') }}
+                </a>
+            </li>
             <li class="nav-item">
                 <a class="nav-link {% block nav_profile %}{% endblock %}" href="{{ root_path }}/admin/profile">
                     👤 {{ t('admin.profile') }}
