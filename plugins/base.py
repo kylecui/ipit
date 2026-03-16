@@ -109,8 +109,25 @@ class TIPlugin(ABC):
 
     # ── Shared utilities for plugins ────────────────────────────────
 
+    def set_api_key_override(self, key: str | None) -> None:
+        """Set a per-request API key override (e.g. from per-user storage).
+
+        Called by QueryEngine before each plugin query to inject the
+        resolved key from the fallback chain:
+          user_key → shared_admin_key → env_var → None.
+
+        Pass None to clear any previous override.
+        """
+        self._override_api_key: str | None = key
+
     def _get_api_key(self) -> str | None:
-        """Resolve API key from environment variable declared in metadata."""
+        """Resolve API key with per-user override support.
+
+        Priority: override (set via set_api_key_override) → env_var fallback.
+        """
+        override = getattr(self, "_override_api_key", None)
+        if override:
+            return override
         env_var = self.metadata.api_key_env_var
         if not env_var:
             return None
