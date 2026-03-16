@@ -84,6 +84,20 @@ plugins:
     config:
       data_path: data/internal_flows.json
 
+  threatbook:
+    enabled: true
+    api_key_env: THREATBOOK_API_KEY
+    priority: 15
+    config:
+      lang: zh  # Response language: zh or en
+
+  tianjiyoumeng:
+    enabled: true
+    api_key_env: TIANJIYOUMENG_API_KEY
+    priority: 15
+    config:
+      timeout: 20  # Enterprise API may be slower
+
   # ── Example: adding a new source ──────────────────────────
   # threatfox:
   #   enabled: true
