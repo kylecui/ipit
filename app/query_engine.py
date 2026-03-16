@@ -4,9 +4,13 @@ Query orchestration engine for threat intelligence analysis.
 v2.0: Uses PluginRegistry to discover and run TI plugins instead of
 the hardcoded CollectorAggregator. Each plugin handles collection,
 normalization, AND scoring in a single self-contained unit.
+
+v2.1: Integrates persistent storage — verdicts are archived on refresh
+and new results are saved to storage/results.db alongside the TTL cache.
 """
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
@@ -22,6 +26,7 @@ from analyzers.contextual_risk_engine import ContextualRiskEngine
 from analyzers.noise_engine import NoiseEngine
 from plugins import PluginRegistry, PluginResult, TIPlugin, SandboxedPluginRunner
 from cache.cache_store import CacheStore
+from storage.result_store import result_store
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,7 @@ class QueryEngine:
         observable: Observable,
         context: Optional[ContextProfile] = None,
         refresh: bool = False,
+        user_id: Optional[int] = None,
     ) -> Verdict:
         """
         Main analysis pipeline.
@@ -89,15 +95,42 @@ class QueryEngine:
         3. enrich — add semantic tags
         4. analyze — reputation + contextual + noise analysis
         5. verdict — final decision with evidence fusion
+
+        Args:
+            observable: The observable to analyze.
+            context: Optional context for enhanced analysis.
+            refresh: Bypass cache and re-query all sources.
+            user_id: Authenticated user ID for per-user API key resolution.
         """
 
         if observable.type == "ip":
+            # Archive existing snapshots before refresh so history is preserved
+            if refresh:
+                try:
+                    archived = result_store.archive_snapshots(observable.value)
+                    if archived:
+                        logger.info(
+                            "Archived %d previous snapshot(s) for %s",
+                            archived,
+                            observable.value,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to archive snapshots for %s: %s",
+                        observable.value,
+                        e,
+                    )
+
             profile, plugin_evidence = await self._collect_ip_data(
-                observable.value, refresh=refresh
+                observable.value, refresh=refresh, user_id=user_id
             )
             enriched_profile = await self._enrich_ip_profile(profile)
             verdict = await self._analyze_ip_profile(
-                enriched_profile, plugin_evidence, context, refresh=refresh
+                enriched_profile,
+                plugin_evidence,
+                context,
+                refresh=refresh,
+                user_id=user_id,
             )
             return verdict
 
@@ -137,9 +170,14 @@ class QueryEngine:
     # ── Collection via plugins ─────────────────────────────────────
 
     async def _collect_ip_data(
-        self, ip: str, refresh: bool = False
+        self, ip: str, refresh: bool = False, user_id: Optional[int] = None
     ) -> Tuple[IPProfile, List[EvidenceItem]]:
         """Collect IP data from all enabled plugins.
+
+        Args:
+            ip: IP address to query.
+            refresh: Bypass cache.
+            user_id: Authenticated user ID for per-user API key resolution.
 
         Returns:
             Tuple of (IPProfile, plugin_evidence_list)
@@ -157,10 +195,18 @@ class QueryEngine:
             f"{[p.metadata.name for p in plugins]}"
         )
 
+        # Resolve per-user API keys before running plugins
+        if user_id is not None:
+            self._inject_api_keys(plugins, user_id)
+
         # Run all plugins concurrently with fault-tolerance
         results = await asyncio.gather(
             *[self._safe_query(plugin, ip, "ip") for plugin in plugins]
         )
+
+        # Clear API key overrides after queries complete (security hygiene)
+        for plugin in plugins:
+            plugin.set_api_key_override(None)
 
         # Convert PluginResults → legacy sources dict + collect evidence
         sources: Dict[str, Dict[str, Any]] = {}
@@ -196,6 +242,32 @@ class QueryEngine:
         self.cache.set_normalized_profile(ip, profile)
 
         return profile, all_evidence
+
+    def _inject_api_keys(self, plugins: List[TIPlugin], user_id: int) -> None:
+        """Resolve per-user API keys and inject them into plugin instances.
+
+        Uses the result_store fallback chain:
+          user_key → shared_admin_key → env_var → None.
+
+        Plugins that don't require API keys are skipped.
+        """
+        for plugin in plugins:
+            meta = plugin.metadata
+            if not meta.requires_api_key:
+                continue
+
+            resolved_key, source = result_store.resolve_plugin_api_key(
+                user_id=user_id,
+                plugin_name=meta.name,
+                env_var=meta.api_key_env_var,
+            )
+            if resolved_key:
+                plugin.set_api_key_override(resolved_key)
+                logger.debug(
+                    "Plugin '%s': API key resolved from %s source",
+                    meta.name,
+                    source,
+                )
 
     async def _safe_query(
         self, plugin: TIPlugin, observable: str, obs_type: str
@@ -260,11 +332,19 @@ class QueryEngine:
         plugin_evidence: List[EvidenceItem],
         context: Optional[ContextProfile] = None,
         refresh: bool = False,
+        user_id: Optional[int] = None,
     ) -> Verdict:
         """Analyze IP profile for threats.
 
         v2.0 change: Plugins already produced scored evidence. The
         ReputationEngine now only adds semantic tag adjustments.
+
+        Args:
+            profile: Enriched IP profile.
+            plugin_evidence: Evidence items from plugins.
+            context: Optional context for enhanced analysis.
+            refresh: Bypass cache.
+            user_id: User ID for snapshot attribution.
         """
         # Check cache first unless refresh
         if not refresh:
@@ -313,5 +393,23 @@ class QueryEngine:
 
         # Cache verdict
         self.cache.set_verdict(profile.ip, verdict)
+
+        # Persist verdict snapshot for historical comparison
+        try:
+            verdict_json = verdict.json()
+            sources_json = json.dumps(profile.sources) if profile.sources else None
+            # Determine API key type for per-key sharing logic
+            api_key_type = "shared" if user_id is None else "personal"
+            result_store.save_snapshot(
+                ip=profile.ip,
+                verdict_json=verdict_json,
+                sources_json=sources_json,
+                final_score=verdict.final_score,
+                level=verdict.level,
+                user_id=user_id,
+                api_key_type=api_key_type,
+            )
+        except Exception as e:
+            logger.warning("Failed to persist snapshot for %s: %s", profile.ip, e)
 
         return verdict
