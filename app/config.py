@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Admin portal session secret
     session_secret_key: str = "change-me-in-production"
 
+    # Persistence: result staleness threshold (days)
+    result_staleness_days: int = 7
+
+    # Fernet encryption key for API keys at rest
+    tire_fernet_key: Optional[str] = None
+
 
 # Global settings instance
 settings = Settings()
