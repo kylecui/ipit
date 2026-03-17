@@ -148,8 +148,8 @@
                             <form method="post" action="{{ root_path }}/admin/users/{{ u.id }}/permissions" class="d-flex flex-wrap gap-2">
                                 <select class="form-select form-select-sm" name="personal_llm" style="width:auto; max-width: 260px;">
                                     <option value="inherit" {% if user_personal_llm_permissions[u.id] is none %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.inherit') }}</option>
-                                    <option value="true" {% if user_personal_llm_permissions[u.id] == true %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.shared_allowed') }}</option>
-                                    <option value="false" {% if user_personal_llm_permissions[u.id] == false %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.shared_denied') }}</option>
+                                    <option value="true" {% if user_personal_llm_permissions[u.id] == true %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.allowed') }}</option>
+                                    <option value="false" {% if user_personal_llm_permissions[u.id] == false %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.denied') }}</option>
                                 </select>
                                 {% for plugin in plugins %}
                                 <select class="form-select form-select-sm" name="perm_{{ plugin.plugin_name }}" style="width:auto; max-width: 220px;">

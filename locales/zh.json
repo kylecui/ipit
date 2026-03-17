@@ -241,6 +241,8 @@
     "admin.plugin_name": "插件",
     "admin.key_status": "密钥状态",
     "admin.set": "已设置",
+    "admin.allowed": "允许",
+    "admin.denied": "禁止",
     "admin.not_set": "未设置",
     "admin.apply_key": "申请 API 密钥",
     "admin.update_key": "更新密钥",

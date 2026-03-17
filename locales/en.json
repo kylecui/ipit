@@ -241,6 +241,8 @@
     "admin.plugin_name": "Plugin",
     "admin.key_status": "Key Status",
     "admin.set": "Set",
+    "admin.allowed": "Allowed",
+    "admin.denied": "Denied",
     "admin.not_set": "Not Set",
     "admin.apply_key": "Get API Key",
     "admin.update_key": "Update Key",
