@@ -63,6 +63,7 @@ async def startup_event():
     from admin.log_handler import MemoryLogHandler, LogStore
 
     store = LogStore()
+    store.bind_loop()
     handler = MemoryLogHandler(store)
     handler.setFormatter(logging.Formatter("%(message)s"))
     logging.getLogger().addHandler(handler)
@@ -351,8 +352,13 @@ async def generate_report(
         if not regenerate:
             from storage.result_store import result_store
 
+            llm_settings = admin_db.get_llm_settings(user["id"])
+
             cached_report = result_store.get_latest_report(
-                ip=ip, user_id=user["id"], lang=lang
+                ip=ip,
+                user_id=user["id"],
+                llm_fingerprint=llm_settings.get("fingerprint", ""),
+                lang=lang,
             )
             if cached_report:
                 logger.info(
@@ -406,6 +412,8 @@ async def generate_report(
             user_id=user["id"],
             report_html=html,
             llm_enhanced=llm_settings.get("api_key", "") != "",
+            llm_fingerprint=llm_settings.get("fingerprint", ""),
+            llm_source=llm_settings.get("source", "template"),
             lang=lang,
         )
 

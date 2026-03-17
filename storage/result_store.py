@@ -124,6 +124,8 @@ class ResultStore:
                     snapshot_id     INTEGER,
                     report_html     TEXT    NOT NULL,
                     llm_enhanced    INTEGER NOT NULL DEFAULT 0,
+                    llm_fingerprint TEXT    NOT NULL DEFAULT '',
+                    llm_source      TEXT    NOT NULL DEFAULT 'template',
                     lang            TEXT    NOT NULL DEFAULT 'en',
                     generated_at    TEXT    NOT NULL,
                     is_archived     INTEGER NOT NULL DEFAULT 0,
@@ -149,14 +151,37 @@ class ResultStore:
                 CREATE TABLE IF NOT EXISTS admin_key_policy (
                     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                     allow_shared_keys   INTEGER NOT NULL DEFAULT 1,
+                    configured_only     INTEGER NOT NULL DEFAULT 1,
                     updated_at          TEXT    NOT NULL
                 );
             """)
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(stored_reports)").fetchall()
+            }
+            if "llm_fingerprint" not in columns:
+                conn.execute(
+                    "ALTER TABLE stored_reports ADD COLUMN llm_fingerprint TEXT NOT NULL DEFAULT ''"
+                )
+            if "llm_source" not in columns:
+                conn.execute(
+                    "ALTER TABLE stored_reports ADD COLUMN llm_source TEXT NOT NULL DEFAULT 'template'"
+                )
+            policy_columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(admin_key_policy)"
+                ).fetchall()
+            }
+            if "configured_only" not in policy_columns:
+                conn.execute(
+                    "ALTER TABLE admin_key_policy ADD COLUMN configured_only INTEGER NOT NULL DEFAULT 1"
+                )
             # Ensure a default policy row exists
             row = conn.execute("SELECT COUNT(*) FROM admin_key_policy").fetchone()
             if row[0] == 0:
                 conn.execute(
-                    "INSERT INTO admin_key_policy (allow_shared_keys, updated_at) VALUES (1, ?)",
+                    "INSERT INTO admin_key_policy (allow_shared_keys, configured_only, updated_at) VALUES (1, 1, ?)",
                     (_utc_now_iso(),),
                 )
 
@@ -276,6 +301,8 @@ class ResultStore:
         user_id: int,
         report_html: str,
         llm_enhanced: bool = False,
+        llm_fingerprint: str = "",
+        llm_source: str = "template",
         lang: str = "en",
         snapshot_id: int | None = None,
     ) -> int:
@@ -284,9 +311,20 @@ class ResultStore:
         with self._get_conn() as conn:
             cursor = conn.execute(
                 """INSERT INTO stored_reports
-                   (ip, user_id, snapshot_id, report_html, llm_enhanced, lang, generated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (ip, user_id, snapshot_id, report_html, int(llm_enhanced), lang, now),
+                   (ip, user_id, snapshot_id, report_html, llm_enhanced, llm_fingerprint,
+                    llm_source, lang, generated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    ip,
+                    user_id,
+                    snapshot_id,
+                    report_html,
+                    int(llm_enhanced),
+                    llm_fingerprint,
+                    llm_source,
+                    lang,
+                    now,
+                ),
             )
             return cursor.lastrowid  # type: ignore[return-value]
 
@@ -294,6 +332,7 @@ class ResultStore:
         self,
         ip: str,
         user_id: int,
+        llm_fingerprint: str = "",
         lang: str = "en",
     ) -> Optional[dict[str, Any]]:
         """Return the latest non-archived report for an IP+user+lang combo.
@@ -303,9 +342,10 @@ class ResultStore:
         with self._get_conn() as conn:
             row = conn.execute(
                 """SELECT * FROM stored_reports
-                   WHERE ip = ? AND user_id = ? AND lang = ? AND is_archived = 0
+                   WHERE ip = ? AND user_id = ? AND lang = ?
+                     AND llm_fingerprint = ? AND is_archived = 0
                    ORDER BY generated_at DESC LIMIT 1""",
-                (ip, user_id, lang),
+                (ip, user_id, lang, llm_fingerprint),
             ).fetchone()
         return dict(row) if row else None
 
@@ -392,11 +432,11 @@ class ResultStore:
     ) -> tuple[Optional[str], str]:
         """Resolve the effective API key using the fallback chain.
 
-        Fallback order: user_key -> shared_admin_key -> env_var -> None.
+        Fallback order: user_key -> shared_admin_key -> None.
 
         Returns:
             (api_key, source) where source is one of:
-            'user', 'shared', 'env', 'none'
+            'user', 'shared', 'none'
         """
         # 1. User's personal key
         user_key = self.get_plugin_api_key(user_id, plugin_name)
@@ -408,12 +448,6 @@ class ResultStore:
             shared_key = self.get_plugin_api_key(0, plugin_name)
             if shared_key:
                 return shared_key, "shared"
-
-        # 3. Environment variable fallback
-        if env_var:
-            env_val = os.environ.get(env_var)
-            if env_val:
-                return env_val, "env"
 
         return None, "none"
 
@@ -447,6 +481,14 @@ class ResultStore:
             ).fetchone()
         return bool(row and row["allow_shared_keys"])
 
+    def is_configured_only(self) -> bool:
+        """Whether runtime key resolution must ignore environment variables."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT configured_only FROM admin_key_policy ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return bool(row and row["configured_only"])
+
     def set_shared_keys_policy(self, allowed: bool) -> None:
         """Update the shared-key policy."""
         now = _utc_now_iso()
@@ -456,6 +498,17 @@ class ResultStore:
                    SET allow_shared_keys = ?, updated_at = ?
                    WHERE id = (SELECT id FROM admin_key_policy ORDER BY id DESC LIMIT 1)""",
                 (int(allowed), now),
+            )
+
+    def set_configured_only_policy(self, configured_only: bool) -> None:
+        """Update whether runtime should only use configured keys."""
+        now = _utc_now_iso()
+        with self._get_conn() as conn:
+            conn.execute(
+                """UPDATE admin_key_policy
+                   SET configured_only = ?, updated_at = ?
+                   WHERE id = (SELECT id FROM admin_key_policy ORDER BY id DESC LIMIT 1)""",
+                (int(configured_only), now),
             )
 
 
