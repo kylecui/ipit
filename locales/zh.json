@@ -297,5 +297,21 @@
     "compare.from": "从",
     "compare.to": "至",
     "compare.unchanged": "未变化",
-    "compare.back_to_dashboard": "返回仪表板"
+    "compare.back_to_dashboard": "返回仪表板",
+
+    "dashboard.recent_queries": "最近查询",
+    "dashboard.recent_reports": "最近报告",
+    "dashboard.ip": "IP",
+    "dashboard.score": "评分",
+    "dashboard.queried_at": "查询时间",
+    "dashboard.generated_at": "生成时间",
+    "dashboard.actions": "操作",
+    "dashboard.timeline": "时间线",
+    "dashboard.compare": "对比",
+    "dashboard.compare_snapshot": "对比关联快照",
+    "dashboard.view": "查看",
+    "dashboard.template": "模板",
+    "dashboard.report_type": "报告类型",
+    "dashboard.no_recent_queries": "暂无最近查询。",
+    "dashboard.no_recent_reports": "暂无最近报告。"
 }

@@ -297,5 +297,21 @@
     "compare.from": "From",
     "compare.to": "To",
     "compare.unchanged": "Unchanged",
-    "compare.back_to_dashboard": "Back to Dashboard"
+    "compare.back_to_dashboard": "Back to Dashboard",
+
+    "dashboard.recent_queries": "Recent Queries",
+    "dashboard.recent_reports": "Recent Reports",
+    "dashboard.ip": "IP",
+    "dashboard.score": "Score",
+    "dashboard.queried_at": "Queried At",
+    "dashboard.generated_at": "Generated At",
+    "dashboard.actions": "Actions",
+    "dashboard.timeline": "Timeline",
+    "dashboard.compare": "Compare",
+    "dashboard.compare_snapshot": "Compare Snapshot",
+    "dashboard.view": "View",
+    "dashboard.template": "Template",
+    "dashboard.report_type": "Report Type",
+    "dashboard.no_recent_queries": "No recent queries yet.",
+    "dashboard.no_recent_reports": "No recent reports yet."
 }
