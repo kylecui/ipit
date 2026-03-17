@@ -541,7 +541,10 @@ async def llm_settings_page(request: Request):
     if not user:
         return login_redirect(request)
     llm = admin_db.get_llm_settings(user["id"])
-    shared_llm_configs = admin_db.list_shared_llm_configs()
+    can_use_personal_llm = admin_db.can_user_use_personal_llm(user["id"])
+    shared_llm_configs = (
+        admin_db.list_shared_llm_configs() if user.get("is_admin") else []
+    )
     assignment = admin_db.get_user_llm_assignment(user["id"])
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
@@ -552,6 +555,7 @@ async def llm_settings_page(request: Request):
             llm=llm,
             shared_llm_configs=shared_llm_configs,
             selected_shared_llm_id=(assignment or {}).get("llm_config_id"),
+            can_use_personal_llm=can_use_personal_llm,
             msg=msg,
         ),
     )
@@ -568,13 +572,17 @@ async def llm_settings_save(
     user = get_current_user(request)
     if not user:
         return login_redirect(request)
-    selected_shared_id = (
-        int(shared_llm_config_id) if shared_llm_config_id.strip() else None
-    )
-    admin_db.save_llm_settings(
-        user["id"], api_key=api_key, model=model, base_url=base_url
-    )
-    admin_db.assign_shared_llm_to_user(user["id"], selected_shared_id)
+    selected_shared_id = None
+    if user.get("is_admin") and shared_llm_config_id.strip():
+        selected_shared_id = int(shared_llm_config_id)
+
+    if user.get("is_admin") or admin_db.can_user_use_personal_llm(user["id"]):
+        admin_db.save_llm_settings(
+            user["id"], api_key=api_key, model=model, base_url=base_url
+        )
+
+    if user.get("is_admin"):
+        admin_db.assign_shared_llm_to_user(user["id"], selected_shared_id)
     admin_db.log_action(
         user["id"], "llm_settings", f"Updated LLM settings (model: {model})"
     )
@@ -637,6 +645,14 @@ async def llm_validate(request: Request):
         return JSONResponse(
             {"ok": False, "error": "Not authenticated"}, status_code=401
         )
+    if not user.get("is_admin") and not admin_db.can_user_use_personal_llm(user["id"]):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Personal LLM configuration is disabled by admin policy",
+            },
+            status_code=403,
+        )
     try:
         body = await request.json()
     except Exception:
@@ -658,6 +674,15 @@ async def llm_models(request: Request):
     if not user:
         return JSONResponse(
             {"ok": False, "error": "Not authenticated"}, status_code=401
+        )
+    if not user.get("is_admin") and not admin_db.can_user_use_personal_llm(user["id"]):
+        return JSONResponse(
+            {
+                "ok": False,
+                "models": [],
+                "error": "Personal LLM configuration is disabled by admin policy",
+            },
+            status_code=403,
         )
     llm = admin_db.get_llm_settings(user["id"])
     api_key = llm.get("api_key", "").strip()

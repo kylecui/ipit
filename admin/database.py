@@ -154,11 +154,38 @@ class AdminDB:
                     FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE,
                     FOREIGN KEY (llm_config_id) REFERENCES shared_llm_configs(id) ON DELETE SET NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS llm_policy (
+                    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    allow_personal_llm_default  INTEGER NOT NULL DEFAULT 0,
+                    updated_at                  TEXT    NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_llm_permissions (
+                    user_id                INTEGER PRIMARY KEY,
+                    allow_personal_llm     INTEGER,
+                    updated_at             TEXT    NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS group_llm_permissions (
+                    group_id               INTEGER PRIMARY KEY,
+                    allow_personal_llm     INTEGER,
+                    updated_at             TEXT    NOT NULL,
+                    FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE
+                );
                 """
             )
 
         self._ensure_column("users", "is_active", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("llm_settings", "encrypted_api_key", "TEXT DEFAULT ''")
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM llm_policy").fetchone()
+            if row and row["count"] == 0:
+                conn.execute(
+                    "INSERT INTO llm_policy (allow_personal_llm_default, updated_at) VALUES (0, ?)",
+                    (_utc_now_iso(),),
+                )
 
     def _encrypt_secret(self, value: str) -> str:
         if not value:
@@ -444,12 +471,14 @@ class AdminDB:
     # ── Personal & Shared LLM Settings ──────────────────────────
 
     def get_llm_settings(self, user_id: int) -> dict[str, Any]:
+        user = self.get_user_by_id(user_id)
+        can_use_personal = self.can_user_use_personal_llm(user_id)
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT * FROM llm_settings WHERE user_id = ?", (user_id,)
             ).fetchone()
 
-        if row:
+        if row and ((user and user.get("is_admin")) or can_use_personal):
             legacy_plain = row["api_key"] or ""
             encrypted = row["encrypted_api_key"] or ""
             api_key = self._decrypt_secret(encrypted) if encrypted else legacy_plain
@@ -461,10 +490,12 @@ class AdminDB:
                     "base_url": row["base_url"],
                     "source": "personal",
                     "fingerprint": f"personal:{user_id}:{row['model']}:{row['base_url']}",
+                    "can_use_personal_llm": can_use_personal,
                 }
 
         assigned = self.get_assigned_shared_llm(user_id)
         if assigned:
+            assigned["can_use_personal_llm"] = can_use_personal
             return assigned
 
         return {
@@ -474,6 +505,7 @@ class AdminDB:
             "base_url": "",
             "source": "template",
             "fingerprint": f"template:{user_id}",
+            "can_use_personal_llm": can_use_personal,
         }
 
     def save_llm_settings(
@@ -497,6 +529,101 @@ class AdminDB:
                      updated_at = excluded.updated_at""",
                 (user_id, encrypted, model, base_url, now),
             )
+
+    def get_llm_policy(self) -> dict[str, Any]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT allow_personal_llm_default FROM llm_policy ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return {
+            "allow_personal_llm_default": bool(row["allow_personal_llm_default"])
+            if row
+            else False
+        }
+
+    def set_llm_policy(self, allow_personal_llm_default: bool) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE llm_policy SET allow_personal_llm_default = ?, updated_at = ? WHERE id = (SELECT id FROM llm_policy ORDER BY id DESC LIMIT 1)",
+                (int(allow_personal_llm_default), _utc_now_iso()),
+            )
+
+    def set_user_personal_llm_permission(
+        self, user_id: int, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM user_llm_permissions WHERE user_id = ?", (user_id,)
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_llm_permissions (user_id, allow_personal_llm, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(user_id) DO UPDATE SET
+                         allow_personal_llm = excluded.allow_personal_llm,
+                         updated_at = excluded.updated_at""",
+                    (user_id, int(allowed), _utc_now_iso()),
+                )
+
+    def get_user_personal_llm_permission(self, user_id: int) -> bool | None:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT allow_personal_llm FROM user_llm_permissions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return bool(row["allow_personal_llm"])
+
+    def set_group_personal_llm_permission(
+        self, group_id: int, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM group_llm_permissions WHERE group_id = ?", (group_id,)
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO group_llm_permissions (group_id, allow_personal_llm, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(group_id) DO UPDATE SET
+                         allow_personal_llm = excluded.allow_personal_llm,
+                         updated_at = excluded.updated_at""",
+                    (group_id, int(allowed), _utc_now_iso()),
+                )
+
+    def get_group_personal_llm_permission(self, group_id: int) -> bool | None:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT allow_personal_llm FROM group_llm_permissions WHERE group_id = ?",
+                (group_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return bool(row["allow_personal_llm"])
+
+    def can_user_use_personal_llm(self, user_id: int) -> bool:
+        user = self.get_user_by_id(user_id)
+        if user and user.get("is_admin"):
+            return True
+
+        direct = self.get_user_personal_llm_permission(user_id)
+        if direct is not None:
+            return direct
+
+        groups = self.list_groups_for_user(user_id)
+        if groups:
+            decisions = [
+                self.get_group_personal_llm_permission(group["id"]) for group in groups
+            ]
+            if any(value is False for value in decisions):
+                return False
+            if any(value is True for value in decisions):
+                return True
+
+        return self.get_llm_policy()["allow_personal_llm_default"]
 
     def list_shared_llm_configs(self) -> list[dict[str, Any]]:
         with self._get_conn() as conn:
