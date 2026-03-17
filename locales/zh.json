@@ -75,6 +75,8 @@
     "narrative.llm_badge_tip": "叙述性内容由AI生成，提供更深层次的上下文分析",
     "narrative.template_badge": "模板分析",
     "narrative.template_badge_tip": "报告由结构化模板生成（未配置LLM）",
+    "narrative.llm_fallback_title": "AI 增强不可用",
+    "narrative.llm_fallback_message": "本报告使用标准模板生成，因为 AI 生成超时或暂时不可用。所有已采集的数据和评分仍然会完整显示。",
     "narrative.print": "打印报告",
     "narrative.generate": "生成详细报告",
     "narrative.generating": "生成中...",
