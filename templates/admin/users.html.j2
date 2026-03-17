@@ -12,42 +12,57 @@
 </div>
 {% endif %}
 
-<!-- Create User -->
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h6 class="mb-0">{{ t('admin.create_user') }}</h6>
-        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#createUserForm">
-            +
-        </button>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#createUserForm">+</button>
     </div>
     <div class="collapse" id="createUserForm">
         <div class="card-body">
-            <form method="post" action="{{ root_path }}/admin/users/create">
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label for="username" class="form-label">{{ t('admin.username') }}</label>
-                        <input type="text" class="form-control" id="username" name="username" required>
-                    </div>
-                    <div class="col-md-4">
-                        <label for="password" class="form-label">{{ t('admin.password') }}</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                    </div>
-                    <div class="col-md-4">
-                        <label for="display_name" class="form-label">{{ t('admin.display_name') }}</label>
-                        <input type="text" class="form-control" id="display_name" name="display_name">
+            <form method="post" action="{{ root_path }}/admin/users/create" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">{{ t('admin.username') }}</label>
+                    <input type="text" class="form-control" name="username" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">{{ t('admin.password') }}</label>
+                    <input type="password" class="form-control" name="password" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">{{ t('admin.display_name') }}</label>
+                    <input type="text" class="form-control" name="display_name">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">{{ t('admin.shared_llm_assignment') }}</label>
+                    <select class="form-select" name="shared_llm_config_id">
+                        <option value="">{{ t('admin.no_shared_llm') }}</option>
+                        {% for item in shared_llm_configs %}
+                        <option value="{{ item.id }}">{{ item.name }} — {{ item.model }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">{{ t('admin.policy_groups') }}</label>
+                    <select class="form-select" name="group_ids" multiple>
+                        {% for group in groups %}
+                        <option value="{{ group.id }}">{{ group.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="is_admin" name="is_admin" value="true">
+                        <label class="form-check-label" for="is_admin">{{ t('admin.is_admin') }}</label>
                     </div>
                 </div>
-                <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" id="is_admin" name="is_admin" value="true">
-                    <label class="form-check-label" for="is_admin">{{ t('admin.is_admin') }}</label>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">{{ t('admin.create_user') }}</button>
                 </div>
-                <button type="submit" class="btn btn-primary mt-3">{{ t('admin.create_user') }}</button>
             </form>
         </div>
     </div>
 </div>
 
-<!-- Users Table -->
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
@@ -79,18 +94,73 @@
                         <td>
                             {% if u.is_active %}
                             <span class="badge bg-success">{{ t('admin.active') }}</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ t('admin.disabled') }}</span>
                             {% endif %}
                         </td>
                         <td><small class="text-muted">{{ u.created_at }}</small></td>
-                        <td>
+                        <td style="min-width: 460px;">
+                            <form method="post" action="{{ root_path }}/admin/users/{{ u.id }}/edit" class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <input class="form-control form-control-sm" name="display_name" value="{{ u.display_name }}">
+                                </div>
+                                <div class="col-md-4">
+                                    <select class="form-select form-select-sm" name="shared_llm_config_id">
+                                        <option value="">{{ t('admin.no_shared_llm') }}</option>
+                                        {% for item in shared_llm_configs %}
+                                        <option value="{{ item.id }}" {% if u.shared_llm_config_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <select class="form-select form-select-sm" name="group_ids" multiple>
+                                        {% for group in groups %}
+                                        <option value="{{ group.id }}" {% if group.id in u.group_ids %}selected{% endif %}>{{ group.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="hidden" name="is_admin" value="false">
+                                    <div class="form-check form-switch mt-1">
+                                        <input class="form-check-input" type="checkbox" name="is_admin" value="true" {% if u.is_admin %}checked{% endif %} {% if u.id == user.id and u.is_admin %}disabled{% endif %}>
+                                        <label class="form-check-label">{{ t('admin.is_admin') }}</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="hidden" name="is_active" value="false">
+                                    <div class="form-check form-switch mt-1">
+                                        <input class="form-check-input" type="checkbox" name="is_active" value="true" {% if u.is_active %}checked{% endif %} {% if u.id == user.id %}disabled{% endif %}>
+                                        <label class="form-check-label">{{ t('admin.active') }}</label>
+                                    </div>
+                                    {% if u.id == user.id %}
+                                    <input type="hidden" name="is_active" value="true">
+                                    {% endif %}
+                                    {% if u.id == user.id and u.is_admin %}
+                                    <input type="hidden" name="is_admin" value="true">
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-6 d-flex gap-2 align-items-start">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">{{ t('admin.save') }}</button>
+                                </div>
+                            </form>
+
+                            <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <form method="post" action="{{ root_path }}/admin/users/{{ u.id }}/permissions" class="d-flex flex-wrap gap-2">
+                                {% for plugin in plugins %}
+                                <select class="form-select form-select-sm" name="perm_{{ plugin.plugin_name }}" style="width:auto; max-width: 220px;">
+                                    <option value="inherit" {% if plugin_permissions[u.id].get(plugin.plugin_name) is none %}selected{% endif %}>{{ plugin.display_name }}: {{ t('admin.inherit') }}</option>
+                                    <option value="true" {% if plugin_permissions[u.id].get(plugin.plugin_name) == true %}selected{% endif %}>{{ plugin.display_name }}: {{ t('admin.shared_allowed') }}</option>
+                                    <option value="false" {% if plugin_permissions[u.id].get(plugin.plugin_name) == false %}selected{% endif %}>{{ plugin.display_name }}: {{ t('admin.shared_denied') }}</option>
+                                </select>
+                                {% endfor %}
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">{{ t('admin.save') }}</button>
+                            </form>
                             {% if u.id != user.id %}
-                            <form method="post" action="{{ root_path }}/admin/users/{{ u.id }}/delete"
-                                  onsubmit="return confirm('{{ t('admin.confirm_delete') }}');" class="d-inline">
+                            <form method="post" action="{{ root_path }}/admin/users/{{ u.id }}/delete" onsubmit="return confirm('{{ t('admin.confirm_delete') }}');">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">{{ t('admin.delete') }}</button>
                             </form>
-                            {% else %}
-                            <span class="text-muted">—</span>
                             {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
