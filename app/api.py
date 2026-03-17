@@ -98,6 +98,14 @@ def _can_view_snapshot(user: dict[str, Any] | None, snapshot: dict[str, Any]) ->
     return snapshot.get("user_id") == user.get("id")
 
 
+def _can_view_report(user: dict[str, Any] | None, report: dict[str, Any]) -> bool:
+    if not user:
+        return False
+    if user.get("is_admin"):
+        return True
+    return report.get("user_id") == user.get("id")
+
+
 @app.get("/healthz")
 async def health_check():
     """Health check endpoint."""
@@ -722,6 +730,78 @@ async def comparison_page(request: Request, ip: str = ""):
     )
 
 
+@app.get("/reports/view/{report_id}", response_class=HTMLResponse)
+async def view_report_page(report_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+
+    from storage.result_store import result_store
+
+    report = result_store.get_report_by_id(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+    if not _can_view_report(user, report):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return HTMLResponse(content=report["report_html"])
+
+
+@app.get("/reports/compare", response_class=HTMLResponse)
+async def compare_reports_page(
+    request: Request,
+    report_a: int | None = None,
+    report_b: int | None = None,
+):
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+
+    from storage.result_store import result_store
+
+    lang = _get_lang(request)
+    t = i18n.get_translator(lang)
+    reports: list[dict[str, Any]] = []
+    for report_id in [report_a, report_b]:
+        if report_id is None:
+            continue
+        report = result_store.get_report_by_id(report_id)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+        if not _can_view_report(user, report):
+            raise HTTPException(status_code=403, detail="Access denied")
+        reports.append(report)
+
+    if len(reports) > 1:
+        base_ip = reports[0]["ip"]
+        if any(report["ip"] != base_ip for report in reports[1:]):
+            raise HTTPException(
+                status_code=400,
+                detail="Compared reports must belong to the same IP",
+            )
+
+    report_history = (
+        result_store.get_report_history(reports[0]["ip"], user["id"], limit=20)
+        if reports
+        else []
+    )
+
+    return templates.TemplateResponse(
+        "reports_compare.html.j2",
+        {
+            "request": request,
+            "t": t,
+            "lang": lang,
+            "root_path": settings.root_path,
+            "user": user,
+            "reports": reports,
+            "report_history": report_history,
+            "report_a": report_a,
+            "report_b": report_b,
+        },
+    )
+
+
 @app.get("/api/v1/reports/detail/{report_id}")
 async def get_report_detail(report_id: int, request: Request):
     """Return a single stored report by ID (for side-by-side comparison)."""
@@ -737,8 +817,7 @@ async def get_report_detail(report_id: int, request: Request):
     if not report:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
 
-    # Per-user isolation: only allow users to see their own reports
-    if report["user_id"] != user["id"]:
+    if not _can_view_report(user, report):
         raise HTTPException(status_code=403, detail="Access denied")
 
     return JSONResponse(content=report)
