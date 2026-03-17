@@ -31,16 +31,18 @@ class GreyNoisePlugin(TIPlugin):
             priority=20,
             tags=["noise", "classification"],
             description="Internet noise and scanning classification",
+            allow_env_fallback=False,
         )
 
     async def query(self, observable: str, obs_type: str) -> PluginResult:
         api_key = self._get_api_key()
-        if not api_key:
-            logger.warning("GreyNoise API key not configured, skipping query")
-            return self._error_result("API key not configured")
 
         url = f"https://api.greynoise.io/v3/community/{observable}"
-        headers = {"Accept": "application/json", "key": api_key}
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["key"] = api_key
+        else:
+            logger.info("GreyNoise API key not configured, using community mode")
 
         result = await self._make_request(url, headers=headers)
 

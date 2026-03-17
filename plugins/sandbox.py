@@ -237,10 +237,10 @@ class SandboxedPluginRunner:
             if value is not None:
                 env_vars[key] = value
 
-        # Plugin's own API key
+        # Plugin's own API key override (preferred) or nothing.
         api_key_env = plugin.metadata.api_key_env_var
         if api_key_env:
-            value = os.environ.get(api_key_env)
+            value = getattr(plugin, "_override_api_key", None)
             if value is not None:
                 env_vars[api_key_env] = value
 

@@ -7,7 +7,6 @@ that every threat intelligence plugin must implement.
 
 import asyncio
 import logging
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +31,7 @@ class PluginMetadata:
     priority: int = 50  # lower = runs first (default 50)
     tags: list[str] = field(default_factory=list)
     description: str = ""
+    allow_env_fallback: bool = False
 
 
 @dataclass
@@ -113,25 +113,18 @@ class TIPlugin(ABC):
         """Set a per-request API key override (e.g. from per-user storage).
 
         Called by QueryEngine before each plugin query to inject the
-        resolved key from the fallback chain:
-          user_key → shared_admin_key → env_var → None.
+        resolved key from the configured-key chain.
 
         Pass None to clear any previous override.
         """
         self._override_api_key: str | None = key
 
     def _get_api_key(self) -> str | None:
-        """Resolve API key with per-user override support.
-
-        Priority: override (set via set_api_key_override) → env_var fallback.
-        """
+        """Resolve API key with per-request override support only."""
         override = getattr(self, "_override_api_key", None)
         if override:
             return override
-        env_var = self.metadata.api_key_env_var
-        if not env_var:
-            return None
-        return os.environ.get(env_var)
+        return None
 
     async def _make_request(
         self,

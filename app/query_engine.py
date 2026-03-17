@@ -27,6 +27,7 @@ from analyzers.noise_engine import NoiseEngine
 from plugins import PluginRegistry, PluginResult, TIPlugin, SandboxedPluginRunner
 from cache.cache_store import CacheStore
 from storage.result_store import result_store
+from admin.database import admin_db
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ class QueryEngine:
                         e,
                     )
 
-            profile, plugin_evidence = await self._collect_ip_data(
+            profile, plugin_evidence, sharing_scope = await self._collect_ip_data(
                 observable.value, refresh=refresh, user_id=user_id
             )
             enriched_profile = await self._enrich_ip_profile(profile)
@@ -131,6 +132,7 @@ class QueryEngine:
                 context,
                 refresh=refresh,
                 user_id=user_id,
+                sharing_scope=sharing_scope,
             )
             return verdict
 
@@ -171,7 +173,7 @@ class QueryEngine:
 
     async def _collect_ip_data(
         self, ip: str, refresh: bool = False, user_id: Optional[int] = None
-    ) -> Tuple[IPProfile, List[EvidenceItem]]:
+    ) -> Tuple[IPProfile, List[EvidenceItem], str]:
         """Collect IP data from all enabled plugins.
 
         Args:
@@ -186,7 +188,7 @@ class QueryEngine:
         if not refresh:
             cached_profile = self.cache.get_normalized_profile(ip)
             if cached_profile:
-                return cached_profile, []
+                return cached_profile, [], "cached"
 
         # Get enabled plugins for IP observable type
         plugins = self.registry.get_enabled("ip")
@@ -196,8 +198,17 @@ class QueryEngine:
         )
 
         # Resolve per-user API keys before running plugins
+        sharing_scope = "system"
         if user_id is not None:
-            self._inject_api_keys(plugins, user_id)
+            key_sources = self._inject_api_keys(plugins, user_id)
+            sharing_scope = (
+                "personal"
+                if any(source == "user" for source in key_sources.values())
+                else "shared"
+            )
+        elif result_store.is_configured_only():
+            for plugin in plugins:
+                plugin.set_api_key_override(None)
 
         # Run all plugins concurrently with fault-tolerance
         results = await asyncio.gather(
@@ -241,26 +252,42 @@ class QueryEngine:
         self.cache.set_collector_results(ip, sources)
         self.cache.set_normalized_profile(ip, profile)
 
-        return profile, all_evidence
+        return profile, all_evidence, sharing_scope
 
-    def _inject_api_keys(self, plugins: List[TIPlugin], user_id: int) -> None:
+    def _inject_api_keys(self, plugins: List[TIPlugin], user_id: int) -> Dict[str, str]:
         """Resolve per-user API keys and inject them into plugin instances.
 
-        Uses the result_store fallback chain:
-          user_key → shared_admin_key → env_var → None.
+        Uses the configured-key fallback chain:
+          user_key → shared_admin_key → None.
 
         Plugins that don't require API keys are skipped.
         """
+        key_sources: Dict[str, str] = {}
         for plugin in plugins:
             meta = plugin.metadata
             if not meta.requires_api_key:
+                key_sources[meta.name] = "not-required"
                 continue
 
-            resolved_key, source = result_store.resolve_plugin_api_key(
-                user_id=user_id,
-                plugin_name=meta.name,
-                env_var=meta.api_key_env_var,
-            )
+            if meta.name == "greynoise":
+                resolved_key = result_store.get_plugin_api_key(user_id, meta.name)
+                source = "user" if resolved_key else "none"
+                if not resolved_key and admin_db.can_user_use_shared_plugin(
+                    user_id, meta.name
+                ):
+                    resolved_key = result_store.get_plugin_api_key(0, meta.name)
+                    if resolved_key:
+                        source = "shared"
+            else:
+                resolved_key, source = result_store.resolve_plugin_api_key(
+                    user_id=user_id,
+                    plugin_name=meta.name,
+                    env_var=meta.api_key_env_var,
+                )
+                if source == "shared" and not admin_db.can_user_use_shared_plugin(
+                    user_id, meta.name
+                ):
+                    resolved_key, source = None, "none"
             if resolved_key:
                 plugin.set_api_key_override(resolved_key)
                 logger.debug(
@@ -268,6 +295,10 @@ class QueryEngine:
                     meta.name,
                     source,
                 )
+            else:
+                plugin.set_api_key_override(None)
+            key_sources[meta.name] = source
+        return key_sources
 
     async def _safe_query(
         self, plugin: TIPlugin, observable: str, obs_type: str
@@ -333,6 +364,7 @@ class QueryEngine:
         context: Optional[ContextProfile] = None,
         refresh: bool = False,
         user_id: Optional[int] = None,
+        sharing_scope: str = "system",
     ) -> Verdict:
         """Analyze IP profile for threats.
 
@@ -399,7 +431,7 @@ class QueryEngine:
             verdict_json = verdict.json()
             sources_json = json.dumps(profile.sources) if profile.sources else None
             # Determine API key type for per-key sharing logic
-            api_key_type = "shared" if user_id is None else "personal"
+            api_key_type = sharing_scope
             result_store.save_snapshot(
                 ip=profile.ip,
                 verdict_json=verdict_json,
