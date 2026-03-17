@@ -1,9 +1,6 @@
-"""
-SQLite database for admin portal — users, settings, and audit log.
+"""Admin portal persistence: users, policy groups, and LLM assignment."""
 
-Follows the existing raw sqlite3 pattern from storage/sqlite_store.py.
-Separate DB file (admin/admin.db) to avoid coupling with cache.
-"""
+from __future__ import annotations
 
 import json
 import logging
@@ -14,56 +11,76 @@ from pathlib import Path
 from typing import Any, Optional
 
 import bcrypt
+from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-# Default DB path — stored under data/ to avoid Docker volume conflicts
-# (Mounting a volume on /app/admin/ would shadow the code directory)
 _DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "admin.db")
 
 
 def _utc_now_iso() -> str:
-    """Return an ISO-8601 UTC timestamp."""
     return datetime.now(UTC).isoformat()
 
 
 class AdminDB:
-    """SQLite-backed admin database for users and settings."""
+    """SQLite-backed admin database for users, groups, and LLM access."""
 
     def __init__(self, db_path: str | None = None):
         self.db_path = Path(db_path or _DEFAULT_DB_PATH).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fernet = self._init_fernet()
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
-    def _init_db(self) -> None:
-        """Create tables if they don't exist."""
+    @staticmethod
+    def _init_fernet() -> Fernet:
+        env_key = os.environ.get("TIRE_FERNET_KEY")
+        if env_key:
+            return Fernet(env_key.encode())
+        generated = Fernet.generate_key()
+        logger.warning(
+            "No TIRE_FERNET_KEY configured — generated a temporary Fernet key for admin DB secrets. "
+            "Stored LLM keys will be unrecoverable after restart."
+        )
+        return Fernet(generated)
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
         with self._get_conn() as conn:
-            conn.executescript("""
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            columns = {row["name"] for row in rows}
+            if column not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _init_db(self) -> None:
+        with self._get_conn() as conn:
+            conn.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS users (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username    TEXT    UNIQUE NOT NULL,
-                    password_hash TEXT  NOT NULL,
-                    display_name TEXT   NOT NULL DEFAULT '',
-                    is_admin    INTEGER NOT NULL DEFAULT 0,
-                    is_active   INTEGER NOT NULL DEFAULT 1,
-                    preferences TEXT    NOT NULL DEFAULT '{}',
-                    created_at  TEXT    NOT NULL,
-                    updated_at  TEXT    NOT NULL
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username        TEXT    UNIQUE NOT NULL,
+                    password_hash   TEXT    NOT NULL,
+                    display_name    TEXT    NOT NULL DEFAULT '',
+                    is_admin        INTEGER NOT NULL DEFAULT 0,
+                    is_active       INTEGER NOT NULL DEFAULT 1,
+                    preferences     TEXT    NOT NULL DEFAULT '{}',
+                    created_at      TEXT    NOT NULL,
+                    updated_at      TEXT    NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS llm_settings (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id     INTEGER NOT NULL UNIQUE,
-                    api_key     TEXT    DEFAULT '',
-                    model       TEXT    NOT NULL DEFAULT 'gpt-4o',
-                    base_url    TEXT    NOT NULL DEFAULT 'https://api.openai.com/v1',
-                    updated_at  TEXT    NOT NULL,
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id             INTEGER NOT NULL UNIQUE,
+                    api_key             TEXT    DEFAULT '',
+                    encrypted_api_key   TEXT    DEFAULT '',
+                    model               TEXT    NOT NULL DEFAULT 'gpt-4o',
+                    base_url            TEXT    NOT NULL DEFAULT 'https://api.openai.com/v1',
+                    updated_at          TEXT    NOT NULL,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
@@ -74,7 +91,90 @@ class AdminDB:
                     detail      TEXT    DEFAULT '',
                     created_at  TEXT    NOT NULL
                 );
-            """)
+
+                CREATE TABLE IF NOT EXISTS policy_groups (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT    UNIQUE NOT NULL,
+                    description TEXT    NOT NULL DEFAULT '',
+                    priority    INTEGER NOT NULL DEFAULT 100,
+                    created_at  TEXT    NOT NULL,
+                    updated_at  TEXT    NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS policy_group_members (
+                    user_id     INTEGER NOT NULL,
+                    group_id    INTEGER NOT NULL,
+                    created_at  TEXT    NOT NULL,
+                    PRIMARY KEY (user_id, group_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS user_plugin_permissions (
+                    user_id          INTEGER NOT NULL,
+                    plugin_name      TEXT    NOT NULL,
+                    can_use_shared   INTEGER NOT NULL,
+                    updated_at       TEXT    NOT NULL,
+                    PRIMARY KEY (user_id, plugin_name),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS group_plugin_permissions (
+                    group_id         INTEGER NOT NULL,
+                    plugin_name      TEXT    NOT NULL,
+                    can_use_shared   INTEGER NOT NULL,
+                    updated_at       TEXT    NOT NULL,
+                    PRIMARY KEY (group_id, plugin_name),
+                    FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS shared_llm_configs (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                TEXT    UNIQUE NOT NULL,
+                    encrypted_api_key   TEXT    NOT NULL,
+                    model               TEXT    NOT NULL,
+                    base_url            TEXT    NOT NULL,
+                    is_active           INTEGER NOT NULL DEFAULT 1,
+                    created_at          TEXT    NOT NULL,
+                    updated_at          TEXT    NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_llm_assignments (
+                    user_id         INTEGER PRIMARY KEY,
+                    llm_config_id   INTEGER,
+                    updated_at      TEXT    NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (llm_config_id) REFERENCES shared_llm_configs(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS group_llm_assignments (
+                    group_id        INTEGER PRIMARY KEY,
+                    llm_config_id   INTEGER,
+                    updated_at      TEXT    NOT NULL,
+                    FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE,
+                    FOREIGN KEY (llm_config_id) REFERENCES shared_llm_configs(id) ON DELETE SET NULL
+                );
+                """
+            )
+
+        self._ensure_column("users", "is_active", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("llm_settings", "encrypted_api_key", "TEXT DEFAULT ''")
+
+    def _encrypt_secret(self, value: str) -> str:
+        if not value:
+            return ""
+        return self._fernet.encrypt(value.encode()).decode()
+
+    def _decrypt_secret(self, value: str) -> str:
+        if not value:
+            return ""
+        try:
+            return self._fernet.decrypt(value.encode()).decode()
+        except Exception:
+            logger.warning(
+                "Failed to decrypt stored admin secret; it may need re-entry"
+            )
+            return ""
 
     # ── User CRUD ───────────────────────────────────────────────
 
@@ -85,7 +185,6 @@ class AdminDB:
         display_name: str = "",
         is_admin: bool = False,
     ) -> int:
-        """Create a new user. Returns user id."""
         now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             password.encode("utf-8"), bcrypt.gensalt()
@@ -104,10 +203,9 @@ class AdminDB:
                     now,
                 ),
             )
-            return cursor.lastrowid  # type: ignore[return-value]
+            return cursor.lastrowid or 0
 
     def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
-        """Get user by username."""
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT * FROM users WHERE username = ?", (username,)
@@ -115,7 +213,6 @@ class AdminDB:
         return dict(row) if row else None
 
     def get_user_by_id(self, user_id: int) -> Optional[dict[str, Any]]:
-        """Get user by id."""
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT * FROM users WHERE id = ?", (user_id,)
@@ -123,27 +220,30 @@ class AdminDB:
         return dict(row) if row else None
 
     def list_users(self) -> list[dict[str, Any]]:
-        """List all users."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT id, username, display_name, is_admin, is_active, created_at FROM users ORDER BY id"
             ).fetchall()
-        return [dict(r) for r in rows]
+        users = [dict(r) for r in rows]
+        for user in users:
+            user["group_ids"] = [g["id"] for g in self.list_groups_for_user(user["id"])]
+            assignment = self.get_user_llm_assignment(user["id"])
+            user["shared_llm_config_id"] = (
+                assignment.get("llm_config_id") if assignment else None
+            )
+        return users
 
     def verify_password(self, username: str, password: str) -> Optional[dict[str, Any]]:
-        """Verify username/password. Returns user dict or None."""
         user = self.get_user_by_username(username)
         if not user or not user.get("is_active"):
             return None
         if bcrypt.checkpw(
-            password.encode("utf-8"),
-            user["password_hash"].encode("utf-8"),
+            password.encode("utf-8"), user["password_hash"].encode("utf-8")
         ):
             return user
         return None
 
     def update_password(self, user_id: int, new_password: str) -> None:
-        """Update user password."""
         now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             new_password.encode("utf-8"), bcrypt.gensalt()
@@ -158,9 +258,8 @@ class AdminDB:
         self,
         user_id: int,
         display_name: str | None = None,
-        preferences: dict | None = None,
+        preferences: dict[str, Any] | None = None,
     ) -> None:
-        """Update user profile fields."""
         now = _utc_now_iso()
         updates = ["updated_at = ?"]
         params: list[Any] = [now]
@@ -172,34 +271,209 @@ class AdminDB:
             params.append(json.dumps(preferences))
         params.append(user_id)
         with self._get_conn() as conn:
+            conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+
+    def count_admin_users(self) -> int:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE is_admin = 1 AND is_active = 1"
+            ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def update_user(
+        self,
+        user_id: int,
+        *,
+        display_name: str,
+        is_admin: bool,
+        is_active: bool,
+    ) -> None:
+        now = _utc_now_iso()
+        with self._get_conn() as conn:
             conn.execute(
-                f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
-                params,
+                """UPDATE users
+                   SET display_name = ?, is_admin = ?, is_active = ?, updated_at = ?
+                   WHERE id = ?""",
+                (display_name, int(is_admin), int(is_active), now, user_id),
             )
 
     def delete_user(self, user_id: int) -> None:
-        """Delete a user."""
         with self._get_conn() as conn:
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
-    # ── LLM Settings ────────────────────────────────────────────
+    # ── Groups & Permissions ────────────────────────────────────
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, name, description, priority, created_at FROM policy_groups ORDER BY priority, name"
+            ).fetchall()
+        groups = [dict(r) for r in rows]
+        for group in groups:
+            group["llm_config_id"] = self.get_group_llm_assignment(group["id"])
+            group["plugin_permissions"] = self.list_group_plugin_permissions(
+                group["id"]
+            )
+        return groups
+
+    def create_group(
+        self, name: str, description: str = "", priority: int = 100
+    ) -> int:
+        now = _utc_now_iso()
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO policy_groups (name, description, priority, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (name, description, priority, now, now),
+            )
+            return cursor.lastrowid or 0
+
+    def delete_group(self, group_id: int) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM policy_groups WHERE id = ?", (group_id,))
+
+    def update_group(
+        self, group_id: int, name: str, description: str, priority: int
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE policy_groups SET name = ?, description = ?, priority = ?, updated_at = ? WHERE id = ?",
+                (name, description, priority, _utc_now_iso(), group_id),
+            )
+
+    def list_groups_for_user(self, user_id: int) -> list[dict[str, Any]]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT g.* FROM policy_groups g
+                   JOIN policy_group_members m ON m.group_id = g.id
+                   WHERE m.user_id = ?
+                   ORDER BY g.priority, g.name""",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_user_groups(self, user_id: int, group_ids: list[int]) -> None:
+        now = _utc_now_iso()
+        normalized = sorted({gid for gid in group_ids if gid > 0})
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM policy_group_members WHERE user_id = ?", (user_id,)
+            )
+            for group_id in normalized:
+                conn.execute(
+                    "INSERT INTO policy_group_members (user_id, group_id, created_at) VALUES (?, ?, ?)",
+                    (user_id, group_id, now),
+                )
+
+    def set_user_plugin_permission(
+        self, user_id: int, plugin_name: str, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM user_plugin_permissions WHERE user_id = ? AND plugin_name = ?",
+                    (user_id, plugin_name),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_plugin_permissions (user_id, plugin_name, can_use_shared, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(user_id, plugin_name) DO UPDATE SET
+                       can_use_shared = excluded.can_use_shared,
+                       updated_at = excluded.updated_at""",
+                    (user_id, plugin_name, int(allowed), _utc_now_iso()),
+                )
+
+    def list_user_plugin_permissions(self, user_id: int) -> dict[str, bool]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT plugin_name, can_use_shared FROM user_plugin_permissions WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return {row["plugin_name"]: bool(row["can_use_shared"]) for row in rows}
+
+    def set_group_plugin_permission(
+        self, group_id: int, plugin_name: str, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM group_plugin_permissions WHERE group_id = ? AND plugin_name = ?",
+                    (group_id, plugin_name),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO group_plugin_permissions (group_id, plugin_name, can_use_shared, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(group_id, plugin_name) DO UPDATE SET
+                       can_use_shared = excluded.can_use_shared,
+                       updated_at = excluded.updated_at""",
+                    (group_id, plugin_name, int(allowed), _utc_now_iso()),
+                )
+
+    def list_group_plugin_permissions(self, group_id: int) -> dict[str, bool]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT plugin_name, can_use_shared FROM group_plugin_permissions WHERE group_id = ?",
+                (group_id,),
+            ).fetchall()
+        return {row["plugin_name"]: bool(row["can_use_shared"]) for row in rows}
+
+    def can_user_use_shared_plugin(self, user_id: int, plugin_name: str) -> bool:
+        direct = self.list_user_plugin_permissions(user_id)
+        if plugin_name in direct:
+            return direct[plugin_name]
+
+        group_rows = self.list_groups_for_user(user_id)
+        group_ids = [group["id"] for group in group_rows]
+        if group_ids:
+            permissions = [
+                self.list_group_plugin_permissions(group_id) for group_id in group_ids
+            ]
+            if any(
+                plugin_name in perm and not perm[plugin_name] for perm in permissions
+            ):
+                return False
+            if any(plugin_name in perm and perm[plugin_name] for perm in permissions):
+                return True
+
+        from storage.result_store import result_store
+
+        return result_store.is_shared_keys_allowed()
+
+    # ── Personal & Shared LLM Settings ──────────────────────────
 
     def get_llm_settings(self, user_id: int) -> dict[str, Any]:
-        """Get LLM settings for a user. Returns defaults if none saved."""
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT * FROM llm_settings WHERE user_id = ?", (user_id,)
             ).fetchone()
+
         if row:
-            return dict(row)
-        # Return defaults from app config
-        from app.config import settings
+            legacy_plain = row["api_key"] or ""
+            encrypted = row["encrypted_api_key"] or ""
+            api_key = self._decrypt_secret(encrypted) if encrypted else legacy_plain
+            if api_key:
+                return {
+                    "user_id": user_id,
+                    "api_key": api_key,
+                    "model": row["model"],
+                    "base_url": row["base_url"],
+                    "source": "personal",
+                    "fingerprint": f"personal:{user_id}:{row['model']}:{row['base_url']}",
+                }
+
+        assigned = self.get_assigned_shared_llm(user_id)
+        if assigned:
+            return assigned
 
         return {
             "user_id": user_id,
-            "api_key": settings.llm_api_key or "",
-            "model": settings.llm_model,
-            "base_url": settings.llm_base_url,
+            "api_key": "",
+            "model": "",
+            "base_url": "",
+            "source": "template",
+            "fingerprint": f"template:{user_id}",
         }
 
     def save_llm_settings(
@@ -209,33 +483,180 @@ class AdminDB:
         model: str = "gpt-4o",
         base_url: str = "https://api.openai.com/v1",
     ) -> None:
-        """Save or update LLM settings for a user."""
         now = _utc_now_iso()
+        encrypted = self._encrypt_secret(api_key.strip())
         with self._get_conn() as conn:
             conn.execute(
-                """INSERT INTO llm_settings (user_id, api_key, model, base_url, updated_at)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO llm_settings (user_id, api_key, encrypted_api_key, model, base_url, updated_at)
+                   VALUES (?, '', ?, ?, ?, ?)
                    ON CONFLICT(user_id) DO UPDATE SET
-                     api_key = excluded.api_key,
+                     api_key = '',
+                     encrypted_api_key = excluded.encrypted_api_key,
                      model = excluded.model,
                      base_url = excluded.base_url,
                      updated_at = excluded.updated_at""",
-                (user_id, api_key, model, base_url, now),
+                (user_id, encrypted, model, base_url, now),
             )
+
+    def list_shared_llm_configs(self) -> list[dict[str, Any]]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, name, model, base_url, is_active, created_at, updated_at FROM shared_llm_configs ORDER BY id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_shared_llm_config(
+        self,
+        name: str,
+        api_key: str,
+        model: str,
+        base_url: str,
+        *,
+        config_id: int | None = None,
+        is_active: bool = True,
+    ) -> None:
+        now = _utc_now_iso()
+        encrypted = self._encrypt_secret(api_key.strip())
+        with self._get_conn() as conn:
+            if config_id is None:
+                conn.execute(
+                    """INSERT INTO shared_llm_configs
+                       (name, encrypted_api_key, model, base_url, is_active, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (name, encrypted, model, base_url, int(is_active), now, now),
+                )
+            else:
+                if encrypted:
+                    conn.execute(
+                        """UPDATE shared_llm_configs
+                           SET name = ?, encrypted_api_key = ?, model = ?, base_url = ?,
+                               is_active = ?, updated_at = ?
+                           WHERE id = ?""",
+                        (
+                            name,
+                            encrypted,
+                            model,
+                            base_url,
+                            int(is_active),
+                            now,
+                            config_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE shared_llm_configs
+                           SET name = ?, model = ?, base_url = ?, is_active = ?, updated_at = ?
+                           WHERE id = ?""",
+                        (name, model, base_url, int(is_active), now, config_id),
+                    )
+
+    def delete_shared_llm_config(self, config_id: int) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM shared_llm_configs WHERE id = ?", (config_id,))
+
+    def assign_shared_llm_to_user(
+        self, user_id: int, llm_config_id: int | None
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO user_llm_assignments (user_id, llm_config_id, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                     llm_config_id = excluded.llm_config_id,
+                     updated_at = excluded.updated_at""",
+                (user_id, llm_config_id, _utc_now_iso()),
+            )
+
+    def assign_shared_llm_to_group(
+        self, group_id: int, llm_config_id: int | None
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO group_llm_assignments (group_id, llm_config_id, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(group_id) DO UPDATE SET
+                     llm_config_id = excluded.llm_config_id,
+                     updated_at = excluded.updated_at""",
+                (group_id, llm_config_id, _utc_now_iso()),
+            )
+
+    def get_user_llm_assignment(self, user_id: int) -> Optional[dict[str, Any]]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT user_id, llm_config_id FROM user_llm_assignments WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_group_llm_assignment(self, group_id: int) -> int | None:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT llm_config_id FROM group_llm_assignments WHERE group_id = ?",
+                (group_id,),
+            ).fetchone()
+        return (
+            int(row["llm_config_id"])
+            if row and row["llm_config_id"] is not None
+            else None
+        )
+
+    def get_assigned_shared_llm(self, user_id: int) -> Optional[dict[str, Any]]:
+        with self._get_conn() as conn:
+            direct = conn.execute(
+                """SELECT c.* FROM shared_llm_configs c
+                   JOIN user_llm_assignments a ON a.llm_config_id = c.id
+                   WHERE a.user_id = ? AND c.is_active = 1""",
+                (user_id,),
+            ).fetchone()
+            if direct:
+                return {
+                    "user_id": user_id,
+                    "api_key": self._decrypt_secret(direct["encrypted_api_key"]),
+                    "model": direct["model"],
+                    "base_url": direct["base_url"],
+                    "source": "shared-user",
+                    "shared_config_id": direct["id"],
+                    "shared_config_name": direct["name"],
+                    "fingerprint": f"shared:{direct['id']}:{direct['model']}:{direct['base_url']}",
+                }
+
+            group_row = conn.execute(
+                """SELECT c.*, g.id AS group_id, g.name AS group_name, g.priority AS group_priority
+                   FROM shared_llm_configs c
+                   JOIN group_llm_assignments a ON a.llm_config_id = c.id
+                   JOIN policy_groups g ON g.id = a.group_id
+                   JOIN policy_group_members m ON m.group_id = g.id
+                   WHERE m.user_id = ? AND c.is_active = 1
+                   ORDER BY g.priority ASC, g.id ASC
+                   LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+
+        if group_row:
+            return {
+                "user_id": user_id,
+                "api_key": self._decrypt_secret(group_row["encrypted_api_key"]),
+                "model": group_row["model"],
+                "base_url": group_row["base_url"],
+                "source": "shared-group",
+                "shared_config_id": group_row["id"],
+                "shared_config_name": group_row["name"],
+                "group_id": group_row["group_id"],
+                "group_name": group_row["group_name"],
+                "fingerprint": f"shared:{group_row['id']}:{group_row['model']}:{group_row['base_url']}",
+            }
+        return None
 
     # ── Audit Log ───────────────────────────────────────────────
 
     def log_action(self, user_id: int | None, action: str, detail: str = "") -> None:
-        """Record an audit entry."""
-        now = _utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT INTO audit_log (user_id, action, detail, created_at) VALUES (?, ?, ?, ?)",
-                (user_id, action, detail, now),
+                (user_id, action, detail, _utc_now_iso()),
             )
 
     def get_recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Get recent audit log entries."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 """SELECT a.*, u.username FROM audit_log a
@@ -248,40 +669,23 @@ class AdminDB:
     # ── Bootstrap ───────────────────────────────────────────────
 
     def ensure_admin_exists(self) -> None:
-        """Create default admin user if no users exist.
-
-        This runs during application startup and must be safe under
-        multi-worker startup races against a persisted database.
-        """
         default_pw = os.environ.get("ADMIN_PASSWORD", "admin")
         now = _utc_now_iso()
         password_hash = bcrypt.hashpw(
             default_pw.encode("utf-8"), bcrypt.gensalt()
         ).decode("utf-8")
-
         with self._get_conn() as conn:
             cursor = conn.execute(
                 """INSERT INTO users
                    (username, password_hash, display_name, is_admin, created_at, updated_at)
                    SELECT ?, ?, ?, ?, ?, ?
-                   WHERE NOT EXISTS (SELECT 1 FROM users)
-                """,
-                (
-                    "admin",
-                    password_hash,
-                    "Administrator",
-                    1,
-                    now,
-                    now,
-                ),
+                   WHERE NOT EXISTS (SELECT 1 FROM users)""",
+                ("admin", password_hash, "Administrator", 1, now, now),
             )
-
         if cursor.rowcount:
             logger.info(
-                "Created default admin user (username: admin). "
-                "Change the password after first login!"
+                "Created default admin user (username: admin). Change the password after first login!"
             )
 
 
-# Singleton instance
 admin_db = AdminDB()
