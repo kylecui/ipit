@@ -179,16 +179,39 @@ class AdminDB:
                     updated_at             TEXT    NOT NULL,
                     FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS user_llm_allowlist (
+                    user_id         INTEGER NOT NULL,
+                    llm_config_id   INTEGER NOT NULL,
+                    allowed         INTEGER NOT NULL,
+                    updated_at      TEXT    NOT NULL,
+                    PRIMARY KEY (user_id, llm_config_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (llm_config_id) REFERENCES shared_llm_configs(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS group_llm_allowlist (
+                    group_id        INTEGER NOT NULL,
+                    llm_config_id   INTEGER NOT NULL,
+                    allowed         INTEGER NOT NULL,
+                    updated_at      TEXT    NOT NULL,
+                    PRIMARY KEY (group_id, llm_config_id),
+                    FOREIGN KEY (group_id) REFERENCES policy_groups(id) ON DELETE CASCADE,
+                    FOREIGN KEY (llm_config_id) REFERENCES shared_llm_configs(id) ON DELETE CASCADE
+                );
                 """
             )
 
         self._ensure_column("users", "is_active", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("llm_settings", "encrypted_api_key", "TEXT DEFAULT ''")
+        self._ensure_column(
+            "llm_policy", "allow_shared_llm_default", "INTEGER NOT NULL DEFAULT 0"
+        )
         with self._get_conn() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM llm_policy").fetchone()
             if row and row["count"] == 0:
                 conn.execute(
-                    "INSERT INTO llm_policy (allow_personal_llm_default, updated_at) VALUES (0, ?)",
+                    "INSERT INTO llm_policy (allow_personal_llm_default, allow_shared_llm_default, updated_at) VALUES (0, 0, ?)",
                     (_utc_now_iso(),),
                 )
 
@@ -527,27 +550,47 @@ class AdminDB:
             for config in self.list_shared_llm_configs()
             if config.get("is_active")
         }
+        has_explicit_shared_policy = bool(self.list_user_llm_allowlist(user_id)) or any(
+            self.list_group_llm_allowlist(group["id"])
+            for group in self.list_groups_for_user(user_id)
+        )
         allowed_shared_config_ids: list[int] = []
         if user and user.get("is_admin"):
             allowed_shared_config_ids = sorted(active_shared_configs)
         else:
-            direct_assignment = self.get_user_llm_assignment(user_id)
-            if (
-                direct_assignment
-                and direct_assignment.get("llm_config_id") in active_shared_configs
-            ):
-                allowed_shared_config_ids.append(
-                    int(direct_assignment["llm_config_id"])
-                )
+            explicitly_allowed = [
+                config_id
+                for config_id in sorted(active_shared_configs)
+                if self.can_user_use_shared_llm(user_id, config_id)
+            ]
+            if explicitly_allowed or has_explicit_shared_policy:
+                allowed_shared_config_ids = explicitly_allowed
+            else:
+                direct_assignment = self.get_user_llm_assignment(user_id)
+                if (
+                    direct_assignment
+                    and direct_assignment.get("llm_config_id") in active_shared_configs
+                ):
+                    allowed_shared_config_ids.append(
+                        int(direct_assignment["llm_config_id"])
+                    )
 
-            for group in self.list_groups_for_user(user_id):
-                group_config_id = self.get_group_llm_assignment(group["id"])
-                if group_config_id in active_shared_configs:
-                    allowed_shared_config_ids.append(group_config_id)
+                for group in self.list_groups_for_user(user_id):
+                    group_config_id = self.get_group_llm_assignment(group["id"])
+                    if (
+                        group_config_id is not None
+                        and group_config_id in active_shared_configs
+                    ):
+                        allowed_shared_config_ids.append(group_config_id)
 
-            allowed_shared_config_ids = sorted(set(allowed_shared_config_ids))
+                allowed_shared_config_ids = sorted(set(allowed_shared_config_ids))
 
         assigned = self.get_assigned_shared_llm(user_id)
+        if (
+            assigned
+            and assigned.get("shared_config_id") not in allowed_shared_config_ids
+        ):
+            assigned = None
         selected_shared_config_id = (
             int(assigned["shared_config_id"])
             if assigned and assigned.get("shared_config_id") is not None
@@ -691,19 +734,35 @@ class AdminDB:
     def get_llm_policy(self) -> dict[str, Any]:
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT allow_personal_llm_default FROM llm_policy ORDER BY id DESC LIMIT 1"
+                "SELECT allow_personal_llm_default, allow_shared_llm_default FROM llm_policy ORDER BY id DESC LIMIT 1"
             ).fetchone()
         return {
             "allow_personal_llm_default": bool(row["allow_personal_llm_default"])
             if row
-            else False
+            else False,
+            "allow_shared_llm_default": bool(row["allow_shared_llm_default"])
+            if row
+            else False,
         }
 
-    def set_llm_policy(self, allow_personal_llm_default: bool) -> None:
+    def set_llm_policy(
+        self,
+        allow_personal_llm_default: bool,
+        allow_shared_llm_default: bool | None = None,
+    ) -> None:
         with self._get_conn() as conn:
+            current = self.get_llm_policy()
             conn.execute(
-                "UPDATE llm_policy SET allow_personal_llm_default = ?, updated_at = ? WHERE id = (SELECT id FROM llm_policy ORDER BY id DESC LIMIT 1)",
-                (int(allow_personal_llm_default), _utc_now_iso()),
+                "UPDATE llm_policy SET allow_personal_llm_default = ?, allow_shared_llm_default = ?, updated_at = ? WHERE id = (SELECT id FROM llm_policy ORDER BY id DESC LIMIT 1)",
+                (
+                    int(allow_personal_llm_default),
+                    int(
+                        current["allow_shared_llm_default"]
+                        if allow_shared_llm_default is None
+                        else allow_shared_llm_default
+                    ),
+                    _utc_now_iso(),
+                ),
             )
 
     def set_user_personal_llm_permission(
@@ -782,6 +841,95 @@ class AdminDB:
                 return True
 
         return self.get_llm_policy()["allow_personal_llm_default"]
+
+    def set_user_llm_allowlist(
+        self, user_id: int, llm_config_id: int, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM user_llm_allowlist WHERE user_id = ? AND llm_config_id = ?",
+                    (user_id, llm_config_id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_llm_allowlist (user_id, llm_config_id, allowed, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(user_id, llm_config_id) DO UPDATE SET
+                         allowed = excluded.allowed,
+                         updated_at = excluded.updated_at""",
+                    (user_id, llm_config_id, int(allowed), _utc_now_iso()),
+                )
+
+    def list_user_llm_allowlist(self, user_id: int) -> dict[int, bool]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT llm_config_id, allowed FROM user_llm_allowlist WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return {int(row["llm_config_id"]): bool(row["allowed"]) for row in rows}
+
+    def set_group_llm_allowlist(
+        self, group_id: int, llm_config_id: int, allowed: bool | None
+    ) -> None:
+        with self._get_conn() as conn:
+            if allowed is None:
+                conn.execute(
+                    "DELETE FROM group_llm_allowlist WHERE group_id = ? AND llm_config_id = ?",
+                    (group_id, llm_config_id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO group_llm_allowlist (group_id, llm_config_id, allowed, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(group_id, llm_config_id) DO UPDATE SET
+                         allowed = excluded.allowed,
+                         updated_at = excluded.updated_at""",
+                    (group_id, llm_config_id, int(allowed), _utc_now_iso()),
+                )
+
+    def list_group_llm_allowlist(self, group_id: int) -> dict[int, bool]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT llm_config_id, allowed FROM group_llm_allowlist WHERE group_id = ?",
+                (group_id,),
+            ).fetchall()
+        return {int(row["llm_config_id"]): bool(row["allowed"]) for row in rows}
+
+    def can_user_use_shared_llm(self, user_id: int, llm_config_id: int) -> bool:
+        user = self.get_user_by_id(user_id)
+        if user and user.get("is_admin"):
+            return True
+
+        user_allowlist = self.list_user_llm_allowlist(user_id)
+        direct = user_allowlist.get(llm_config_id)
+        if direct is not None:
+            return direct
+
+        groups = self.list_groups_for_user(user_id)
+        group_allowlists = [
+            self.list_group_llm_allowlist(group["id"]) for group in groups
+        ]
+        decisions = [allowlist.get(llm_config_id) for allowlist in group_allowlists]
+        if any(value is False for value in decisions):
+            return False
+        if any(value is True for value in decisions):
+            return True
+
+        if user_allowlist or any(allowlist for allowlist in group_allowlists):
+            return self.get_llm_policy()["allow_shared_llm_default"]
+
+        # Legacy fallback: previous deployments treated assignment as effective access.
+        assignment = self.get_user_llm_assignment(user_id)
+        if assignment and assignment.get("llm_config_id") == llm_config_id:
+            return True
+        if any(
+            self.get_group_llm_assignment(group["id"]) == llm_config_id
+            for group in groups
+        ):
+            return True
+
+        return self.get_llm_policy()["allow_shared_llm_default"]
 
     def list_shared_llm_configs(self) -> list[dict[str, Any]]:
         with self._get_conn() as conn:
