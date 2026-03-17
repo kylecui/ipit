@@ -266,6 +266,7 @@
     "admin.shared_llm_assignment": "Shared LLM Assignment",
     "admin.shared_llm_assignment_hint": "If selected, this shared LLM config is available to the user in addition to any personal LLM settings.",
     "admin.no_shared_llm": "No shared LLM",
+    "admin.personal_llm_disabled": "Personal LLM configuration is disabled for your account by admin policy. You can only use an admin-assigned shared LLM, if one is assigned.",
     "admin.free_tier": "Free tier available",
     "admin.enterprise_only": "Enterprise only",
     "admin.env_var": "Legacy Env Variable",

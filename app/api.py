@@ -404,6 +404,11 @@ async def generate_report(
             query_date=query_date,
         )
 
+        llm_used = (
+            llm_settings.get("source") != "template"
+            and llm_settings.get("api_key", "") != ""
+        )
+
         # Step 4: Persist the generated report
         from storage.result_store import result_store
 
@@ -411,7 +416,7 @@ async def generate_report(
             ip=ip,
             user_id=user["id"],
             report_html=html,
-            llm_enhanced=llm_settings.get("api_key", "") != "",
+            llm_enhanced=llm_used,
             llm_fingerprint=llm_settings.get("fingerprint", ""),
             llm_source=llm_settings.get("source", "template"),
             lang=lang,

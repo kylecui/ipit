@@ -17,6 +17,7 @@
         <div class="card mb-4">
             <div class="card-body">
                 <form method="post" action="{{ root_path }}/admin/settings/llm" id="llmForm">
+                    {% if user.is_admin %}
                     <div class="mb-3">
                         <label for="shared_llm_config_id" class="form-label">{{ t('admin.shared_llm_assignment') }}</label>
                         <select class="form-select" id="shared_llm_config_id" name="shared_llm_config_id">
@@ -29,7 +30,15 @@
                         </select>
                         <small class="text-muted">{{ t('admin.shared_llm_assignment_hint') }}</small>
                     </div>
+                    {% elif llm.source.startswith('shared') %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ t('admin.shared_llm_assignment') }}</label>
+                        <div class="form-control bg-light">{{ llm.shared_config_name }} — {{ llm.model }}</div>
+                        <small class="text-muted">{{ t('admin.shared_llm_assignment_hint') }}</small>
+                    </div>
+                    {% endif %}
 
+                    {% if user.is_admin or can_use_personal_llm %}
                     <div class="mb-3">
                         <label for="api_key" class="form-label">{{ t('admin.api_key') }}</label>
                         <div class="input-group">
@@ -71,6 +80,16 @@
                             </div>
                         </div>
                     </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        {{ t('admin.personal_llm_disabled') }}
+                    </div>
+                    {% if llm.source == 'template' %}
+                    <div class="alert alert-secondary mb-3">
+                        {{ t('admin.no_shared_llm') }}
+                    </div>
+                    {% endif %}
+                    {% endif %}
 
                     <button type="submit" class="btn btn-primary">{{ t('admin.save') }}</button>
                 </form>
