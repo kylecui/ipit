@@ -40,6 +40,11 @@ class LogStore:
 
     _instance: Optional["LogStore"] = None
     _lock_cls = threading.Lock()
+    _entries: deque[dict[str, Any]]
+    _counter: int
+    _lock: threading.Lock
+    _event: asyncio.Event
+    _loop: Optional[asyncio.AbstractEventLoop]
 
     def __new__(cls) -> "LogStore":
         with cls._lock_cls:
@@ -49,8 +54,16 @@ class LogStore:
                 inst._counter = 0
                 inst._lock = threading.Lock()
                 inst._event = asyncio.Event()
+                inst._loop = None
                 cls._instance = inst
             return cls._instance
+
+    def bind_loop(self) -> None:
+        """Bind the active event loop for thread-safe wakeups."""
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     def next_id(self) -> int:
         with self._lock:
@@ -60,11 +73,13 @@ class LogStore:
     def add(self, entry: dict[str, Any]) -> None:
         with self._lock:
             self._entries.append(entry)
-        # Signal any waiting SSE streams — safe even from non-async threads
-        try:
-            self._event.set()
-        except RuntimeError:
-            pass
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._event.set)
+        else:
+            try:
+                self._event.set()
+            except RuntimeError:
+                pass
 
     def get_entries(
         self,

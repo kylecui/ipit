@@ -137,6 +137,9 @@
     let paused = false;
     let evtSource = null;
     let logCount = 0;
+    let lastSeenId = 0;
+    let reconnectTimer = null;
+    let reconnectDelayMs = 1000;
     const MAX_ROWS = 1000;
 
     function escapeHtml(s) {
@@ -155,6 +158,9 @@
 
     function addRow(entry) {
         if (!matchesFilter(entry)) return;
+        if (entry.id) {
+            lastSeenId = Math.max(lastSeenId, Number(entry.id) || 0);
+        }
         emptyMsg.style.display = 'none';
         const tr = document.createElement('tr');
         tr.className = 'log-row log-' + entry.level;
@@ -178,25 +184,46 @@
 
     function connect() {
         if (evtSource) { evtSource.close(); }
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
         const level = levelFilter.value;
         let url = rootPath + '/admin/api/logs/stream';
-        if (level) url += '?level=' + level;
+        const params = [];
+        if (level) params.push('level=' + encodeURIComponent(level));
+        if (lastSeenId > 0) params.push('since_id=' + encodeURIComponent(lastSeenId));
+        if (params.length) url += '?' + params.join('&');
         evtSource = new EventSource(url);
 
         evtSource.onopen = function() {
             statusDot.className = 'status-dot connected';
             statusText.textContent = '{{ t("admin.log_connected") }}';
+            reconnectDelayMs = 1000;
         };
         evtSource.addEventListener('log', function(e) {
             if (paused) return;
             try {
                 const entry = JSON.parse(e.data);
+                if (e.lastEventId) {
+                    lastSeenId = Math.max(lastSeenId, Number(e.lastEventId) || 0);
+                }
                 addRow(entry);
             } catch(err) {}
         });
         evtSource.onerror = function() {
             statusDot.className = 'status-dot disconnected';
             statusText.textContent = '{{ t("admin.log_disconnected") }}';
+            if (evtSource) {
+                evtSource.close();
+            }
+            if (!reconnectTimer) {
+                reconnectTimer = setTimeout(function() {
+                    reconnectTimer = null;
+                    connect();
+                }, reconnectDelayMs);
+                reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+            }
         };
     }
 
