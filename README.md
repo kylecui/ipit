@@ -138,6 +138,9 @@ Access the dashboard at `http://localhost:8000/`. Enter an IP address and click 
 
 Grouped by category in `.env`:
 
+**Admin Portal**
+- `ADMIN_PASSWORD`: Controls the bootstrap/default admin password for the admin portal. Set this in `.env` and keep it out of version-controlled documentation.
+
 **API Keys**
 - `ABUSEIPDB_API_KEY`: API key for AbuseIPDB.
 - `OTX_API_KEY`: API key for AlienVault OTX.
