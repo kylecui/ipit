@@ -69,6 +69,13 @@ class NarrativeReporter:
         llm_enhanced = False
         overrides = llm_overrides or {}
         if llm_client.is_enabled(overrides):
+            logger.info(
+                "Attempting LLM enhancement for report (ip=%s, lang=%s, source=%s, model=%s)",
+                verdict.object_value,
+                lang,
+                overrides.get("source", "default"),
+                overrides.get("model") or llm_client.model,
+            )
             system_prompt, user_prompt = self._build_llm_prompt(facts, lang)
             response = await llm_client.generate(
                 system_prompt,
@@ -80,6 +87,33 @@ class NarrativeReporter:
             if response:
                 llm_sections = self._parse_llm_response(response)
                 llm_enhanced = bool(llm_sections)
+                if llm_enhanced:
+                    logger.info(
+                        "Report rendered with LLM-enhanced narrative (ip=%s, lang=%s)",
+                        verdict.object_value,
+                        lang,
+                    )
+                else:
+                    logger.warning(
+                        "LLM returned empty/invalid narrative sections; using fallback template content (ip=%s, lang=%s)",
+                        verdict.object_value,
+                        lang,
+                    )
+            else:
+                logger.warning(
+                    "LLM enhancement unavailable; using fallback template content (ip=%s, lang=%s, source=%s, model=%s)",
+                    verdict.object_value,
+                    lang,
+                    overrides.get("source", "default"),
+                    overrides.get("model") or llm_client.model,
+                )
+        else:
+            logger.info(
+                "LLM disabled for report; using template mode (ip=%s, lang=%s, source=%s)",
+                verdict.object_value,
+                lang,
+                overrides.get("source", "default"),
+            )
 
         # Always generate fallback sections
         fallback_sections = self._generate_fallback_sections(source_data, verdict, lang)

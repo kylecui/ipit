@@ -12,6 +12,8 @@ so each user's admin-portal settings take effect at request time.
 """
 
 import logging
+import asyncio
+import random
 from typing import Any, Dict, Optional
 
 import httpx
@@ -74,45 +76,90 @@ class LLMClient:
             logger.debug("LLM not configured, skipping generation")
             return None
 
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{effective_base}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {effective_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": effective_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                logger.info(
-                    "LLM generation completed (%d tokens, model=%s)",
-                    data.get("usage", {}).get("total_tokens", 0),
-                    effective_model,
-                )
-                return content
+        timeout = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+        max_attempts = 3
+        last_reason = "unknown"
 
-        except httpx.TimeoutException:
-            logger.warning("LLM request timed out")
-            return None
-        except httpx.HTTPStatusError as e:
-            logger.warning(
-                "LLM API error: %s %s", e.response.status_code, e.response.text[:200]
-            )
-            return None
-        except Exception as e:
-            logger.warning("LLM generation failed: %s", e)
-            return None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(
+                        f"{effective_base}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {effective_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": effective_model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                    logger.info(
+                        "LLM generation completed (attempt=%d, tokens=%d, model=%s, base=%s, request_id=%s)",
+                        attempt,
+                        data.get("usage", {}).get("total_tokens", 0),
+                        effective_model,
+                        effective_base,
+                        response.headers.get("x-request-id", ""),
+                    )
+                    return content
+
+            except httpx.TimeoutException:
+                last_reason = "timeout"
+                logger.warning(
+                    "LLM request timed out (attempt=%d/%d, model=%s, base=%s)",
+                    attempt,
+                    max_attempts,
+                    effective_model,
+                    effective_base,
+                )
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                last_reason = f"http_{status_code}"
+                logger.warning(
+                    "LLM API error (attempt=%d/%d, status=%s, model=%s, base=%s, request_id=%s): %s",
+                    attempt,
+                    max_attempts,
+                    status_code,
+                    effective_model,
+                    effective_base,
+                    e.response.headers.get("x-request-id", ""),
+                    e.response.text[:200],
+                )
+                if status_code not in {429, 500, 502, 503, 504}:
+                    break
+            except Exception as e:
+                last_reason = type(e).__name__
+                logger.warning(
+                    "LLM generation failed (attempt=%d/%d, model=%s, base=%s): %s",
+                    attempt,
+                    max_attempts,
+                    effective_model,
+                    effective_base,
+                    e,
+                )
+                break
+
+            if attempt < max_attempts:
+                await asyncio.sleep(
+                    min(1.0 * (2 ** (attempt - 1)), 8.0) * random.uniform(0.75, 1.25)
+                )
+
+        logger.warning(
+            "LLM generation exhausted retries; falling back to template mode (reason=%s, model=%s, base=%s)",
+            last_reason,
+            effective_model,
+            effective_base,
+        )
+        return None
 
     async def validate_connection(
         self,
