@@ -268,6 +268,43 @@ class ResultStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_visible_snapshot_history(
+        self, ip: str, user_id: int | None, is_admin: bool, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return snapshot history for an IP filtered by caller visibility."""
+        with self._get_conn() as conn:
+            if is_admin:
+                rows = conn.execute(
+                    """SELECT id, ip, user_id, api_key_type, final_score, level,
+                              queried_at, is_archived
+                       FROM query_snapshots
+                       WHERE ip = ?
+                       ORDER BY queried_at DESC
+                       LIMIT ?""",
+                    (ip, limit),
+                ).fetchall()
+            elif user_id is None:
+                rows = conn.execute(
+                    """SELECT id, ip, user_id, api_key_type, final_score, level,
+                              queried_at, is_archived
+                       FROM query_snapshots
+                       WHERE ip = ? AND api_key_type = 'shared'
+                       ORDER BY queried_at DESC
+                       LIMIT ?""",
+                    (ip, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, ip, user_id, api_key_type, final_score, level,
+                              queried_at, is_archived
+                       FROM query_snapshots
+                       WHERE ip = ? AND (api_key_type = 'shared' OR user_id = ?)
+                       ORDER BY queried_at DESC
+                       LIMIT ?""",
+                    (ip, user_id, limit),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_snapshot_by_id(self, snapshot_id: int) -> Optional[dict[str, Any]]:
         """Retrieve a single snapshot by its ID (for side-by-side diff)."""
         with self._get_conn() as conn:
@@ -276,6 +313,22 @@ class ResultStore:
                 (snapshot_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    def get_user_snapshot_history(
+        self, user_id: int, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return recent snapshots created by a specific user across IPs."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, ip, user_id, api_key_type, final_score, level,
+                          queried_at, is_archived
+                   FROM query_snapshots
+                   WHERE user_id = ?
+                   ORDER BY queried_at DESC
+                   LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def archive_snapshots(self, ip: str) -> int:
         """Mark all current (non-archived) snapshots for an IP as archived.
@@ -334,19 +387,29 @@ class ResultStore:
         user_id: int,
         llm_fingerprint: str = "",
         lang: str = "en",
+        snapshot_id: int | None = None,
     ) -> Optional[dict[str, Any]]:
         """Return the latest non-archived report for an IP+user+lang combo.
 
         Reports are per-user because different users have different LLM settings.
         """
         with self._get_conn() as conn:
-            row = conn.execute(
-                """SELECT * FROM stored_reports
-                   WHERE ip = ? AND user_id = ? AND lang = ?
-                     AND llm_fingerprint = ? AND is_archived = 0
-                   ORDER BY generated_at DESC LIMIT 1""",
-                (ip, user_id, lang, llm_fingerprint),
-            ).fetchone()
+            if snapshot_id is None:
+                row = conn.execute(
+                    """SELECT * FROM stored_reports
+                       WHERE ip = ? AND user_id = ? AND lang = ?
+                         AND llm_fingerprint = ? AND snapshot_id IS NULL AND is_archived = 0
+                       ORDER BY generated_at DESC LIMIT 1""",
+                    (ip, user_id, lang, llm_fingerprint),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT * FROM stored_reports
+                       WHERE ip = ? AND user_id = ? AND lang = ?
+                         AND llm_fingerprint = ? AND snapshot_id = ? AND is_archived = 0
+                       ORDER BY generated_at DESC LIMIT 1""",
+                    (ip, user_id, lang, llm_fingerprint, snapshot_id),
+                ).fetchone()
         return dict(row) if row else None
 
     def get_report_history(
@@ -362,6 +425,22 @@ class ResultStore:
                    ORDER BY generated_at DESC
                    LIMIT ?""",
                 (ip, user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_user_report_history(
+        self, user_id: int, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return recent reports for a specific user across IPs."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, ip, user_id, snapshot_id, llm_enhanced, llm_source,
+                          lang, generated_at, is_archived
+                   FROM stored_reports
+                   WHERE user_id = ?
+                   ORDER BY generated_at DESC
+                   LIMIT ?""",
+                (user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 

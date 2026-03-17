@@ -88,6 +88,16 @@ def _get_lang(request: Request) -> str:
     return settings.language
 
 
+def _can_view_snapshot(user: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
+    if snapshot.get("api_key_type") == "shared":
+        return True
+    if not user:
+        return False
+    if user.get("is_admin"):
+        return True
+    return snapshot.get("user_id") == user.get("id")
+
+
 @app.get("/healthz")
 async def health_check():
     """Health check endpoint."""
@@ -155,7 +165,13 @@ async def get_result_history(ip: str, request: Request, limit: int = 20):
     from storage.result_store import result_store
 
     try:
-        snapshots = result_store.get_snapshot_history(ip, limit=limit)
+        user = get_current_user(request)
+        snapshots = result_store.get_visible_snapshot_history(
+            ip=ip,
+            user_id=user["id"] if user else None,
+            is_admin=bool(user and user.get("is_admin")),
+            limit=limit,
+        )
         return JSONResponse(
             content={"ip": ip, "snapshots": snapshots, "count": len(snapshots)}
         )
@@ -175,9 +191,12 @@ async def get_snapshot_detail(snapshot_id: int, request: Request):
     """
     from storage.result_store import result_store
 
+    user = get_current_user(request)
     snapshot = result_store.get_snapshot_by_id(snapshot_id)
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"Snapshot {snapshot_id} not found")
+    if not _can_view_snapshot(user, snapshot):
+        raise HTTPException(status_code=403, detail="Access denied")
     return JSONResponse(content=snapshot)
 
 
@@ -251,11 +270,15 @@ async def debug_sources(ip: str):
 @app.get("/")
 async def dashboard(request: Request):
     """Web dashboard for IP analysis."""
+    from storage.result_store import result_store
+
     user = get_current_user(request)
     if not user:
         return login_redirect(request)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
+    recent_queries = result_store.get_user_snapshot_history(user["id"], limit=10)
+    recent_reports = result_store.get_user_report_history(user["id"], limit=10)
     response = templates.TemplateResponse(
         "dashboard.html.j2",
         {
@@ -264,6 +287,8 @@ async def dashboard(request: Request):
             "lang": lang,
             "root_path": settings.root_path,
             "user": user,
+            "recent_queries": recent_queries,
+            "recent_reports": recent_reports,
         },
     )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
@@ -275,6 +300,8 @@ async def analyze_web(
     request: Request, ip: str = Form(...), refresh: bool = Form(False)
 ):
     """Web form submission for IP analysis."""
+    from storage.result_store import result_store
+
     user = get_current_user(request)
     if not user:
         return login_redirect(request)
@@ -294,6 +321,12 @@ async def analyze_web(
                 "lang": lang,
                 "root_path": settings.root_path,
                 "user": user,
+                "recent_queries": result_store.get_user_snapshot_history(
+                    user["id"], limit=10
+                ),
+                "recent_reports": result_store.get_user_report_history(
+                    user["id"], limit=10
+                ),
             },
         )
     except Exception as e:
@@ -307,6 +340,12 @@ async def analyze_web(
                 "lang": lang,
                 "root_path": settings.root_path,
                 "user": user,
+                "recent_queries": result_store.get_user_snapshot_history(
+                    user["id"], limit=10
+                ),
+                "recent_reports": result_store.get_user_report_history(
+                    user["id"], limit=10
+                ),
             },
         )
     response.set_cookie("preferred_locale", lang, max_age=365 * 24 * 3600)
@@ -352,13 +391,23 @@ async def generate_report(
         if not regenerate:
             from storage.result_store import result_store
 
-            llm_settings = admin_db.get_llm_settings(user["id"])
+            llm_settings = admin_db.resolve_effective_llm_access(user["id"])
+
+            latest_snapshot = result_store.get_latest_snapshot(
+                ip=ip,
+                user_id=user["id"],
+                api_key_type="personal",
+            )
+            if latest_snapshot is None:
+                latest_snapshot = result_store.get_latest_snapshot(ip=ip)
+            snapshot_id = latest_snapshot.get("id") if latest_snapshot else None
 
             cached_report = result_store.get_latest_report(
                 ip=ip,
                 user_id=user["id"],
                 llm_fingerprint=llm_settings.get("fingerprint", ""),
                 lang=lang,
+                snapshot_id=snapshot_id,
             )
             if cached_report:
                 logger.info(
@@ -383,14 +432,20 @@ async def generate_report(
                     user["id"],
                 )
 
-        llm_settings = admin_db.get_llm_settings(user["id"])
+        llm_settings = admin_db.resolve_effective_llm_access(user["id"])
 
         # Resolve query_date from the latest snapshot for staleness detection
         from storage.result_store import result_store as _store
         from datetime import datetime
 
         query_date = None
-        latest_snapshot = _store.get_latest_snapshot(ip=ip)
+        latest_snapshot = _store.get_latest_snapshot(
+            ip=ip,
+            user_id=user["id"],
+            api_key_type="personal",
+        )
+        if latest_snapshot is None:
+            latest_snapshot = _store.get_latest_snapshot(ip=ip)
         if latest_snapshot and latest_snapshot.get("queried_at"):
             try:
                 query_date = datetime.fromisoformat(latest_snapshot["queried_at"])
@@ -420,6 +475,7 @@ async def generate_report(
             llm_fingerprint=llm_settings.get("fingerprint", ""),
             llm_source=llm_settings.get("source", "template"),
             lang=lang,
+            snapshot_id=latest_snapshot.get("id") if latest_snapshot else None,
         )
 
         return HTMLResponse(content=html)
@@ -482,6 +538,7 @@ async def compare_snapshots(
     import json as _json
 
     try:
+        user = get_current_user(request)
         if snapshot_a is not None and snapshot_b is not None:
             # Side-by-side diff mode
             snap_a = result_store.get_snapshot_by_id(snapshot_a)
@@ -494,6 +551,10 @@ async def compare_snapshots(
                 raise HTTPException(
                     status_code=404, detail=f"Snapshot {snapshot_b} not found"
                 )
+            if not _can_view_snapshot(user, snap_a) or not _can_view_snapshot(
+                user, snap_b
+            ):
+                raise HTTPException(status_code=403, detail="Access denied")
 
             # Compute diff
             diff = _compute_snapshot_diff(snap_a, snap_b)
@@ -518,7 +579,12 @@ async def compare_snapshots(
             )
         else:
             # Timeline mode — return score history
-            snapshots = result_store.get_snapshot_history(ip, limit=50)
+            snapshots = result_store.get_visible_snapshot_history(
+                ip=ip,
+                user_id=user["id"] if user else None,
+                is_admin=bool(user and user.get("is_admin")),
+                limit=50,
+            )
             timeline = [
                 {
                     "id": s["id"],
@@ -676,6 +742,34 @@ async def get_report_detail(report_id: int, request: Request):
         raise HTTPException(status_code=403, detail="Access denied")
 
     return JSONResponse(content=report)
+
+
+@app.get("/api/v1/users/me/snapshots")
+async def get_my_snapshot_history(request: Request, limit: int = 20):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(
+            status_code=401, content={"detail": "Authentication required"}
+        )
+
+    from storage.result_store import result_store
+
+    snapshots = result_store.get_user_snapshot_history(user["id"], limit=limit)
+    return JSONResponse(content={"snapshots": snapshots, "count": len(snapshots)})
+
+
+@app.get("/api/v1/users/me/reports")
+async def get_my_report_history(request: Request, limit: int = 20):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(
+            status_code=401, content={"detail": "Authentication required"}
+        )
+
+    from storage.result_store import result_store
+
+    reports = result_store.get_user_report_history(user["id"], limit=limit)
+    return JSONResponse(content={"reports": reports, "count": len(reports)})
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import sqlite3
@@ -20,6 +21,10 @@ _DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "admin.
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _normalize_base_url(value: str) -> str:
+    return value.rstrip("/") if value else ""
 
 
 class AdminDB:
@@ -202,6 +207,32 @@ class AdminDB:
                 "Failed to decrypt stored admin secret; it may need re-entry"
             )
             return ""
+
+    @staticmethod
+    def _build_llm_fingerprint(
+        *,
+        source: str,
+        api_key: str,
+        model: str,
+        base_url: str,
+        user_id: int,
+        shared_config_id: int | None = None,
+    ) -> str:
+        normalized_base = _normalize_base_url(base_url)
+        if source == "template":
+            return f"template:{user_id}"
+
+        owner = (
+            f"shared:{shared_config_id}"
+            if shared_config_id is not None
+            else f"user:{user_id}"
+        )
+        digest = (
+            hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+            if api_key
+            else "none"
+        )
+        return f"{source}:{owner}:{digest}:{model}:{normalized_base}"
 
     # ── User CRUD ───────────────────────────────────────────────
 
@@ -470,33 +501,145 @@ class AdminDB:
 
     # ── Personal & Shared LLM Settings ──────────────────────────
 
-    def get_llm_settings(self, user_id: int) -> dict[str, Any]:
+    def resolve_effective_llm_access(self, user_id: int) -> dict[str, Any]:
         user = self.get_user_by_id(user_id)
         can_use_personal = self.can_user_use_personal_llm(user_id)
+
         with self._get_conn() as conn:
-            row = conn.execute(
+            personal_row = conn.execute(
                 "SELECT * FROM llm_settings WHERE user_id = ?", (user_id,)
             ).fetchone()
 
-        if row and ((user and user.get("is_admin")) or can_use_personal):
-            legacy_plain = row["api_key"] or ""
-            encrypted = row["encrypted_api_key"] or ""
-            api_key = self._decrypt_secret(encrypted) if encrypted else legacy_plain
-            if api_key:
-                return {
-                    "user_id": user_id,
-                    "api_key": api_key,
-                    "model": row["model"],
-                    "base_url": row["base_url"],
-                    "source": "personal",
-                    "fingerprint": f"personal:{user_id}:{row['model']}:{row['base_url']}",
-                    "can_use_personal_llm": can_use_personal,
-                }
+        personal_api_key = ""
+        personal_model = ""
+        personal_base_url = ""
+        if personal_row:
+            legacy_plain = personal_row["api_key"] or ""
+            encrypted = personal_row["encrypted_api_key"] or ""
+            personal_api_key = (
+                self._decrypt_secret(encrypted) if encrypted else legacy_plain
+            ).strip()
+            personal_model = personal_row["model"] or ""
+            personal_base_url = _normalize_base_url(personal_row["base_url"] or "")
+
+        active_shared_configs = {
+            config["id"]: config
+            for config in self.list_shared_llm_configs()
+            if config.get("is_active")
+        }
+        allowed_shared_config_ids: list[int] = []
+        if user and user.get("is_admin"):
+            allowed_shared_config_ids = sorted(active_shared_configs)
+        else:
+            direct_assignment = self.get_user_llm_assignment(user_id)
+            if (
+                direct_assignment
+                and direct_assignment.get("llm_config_id") in active_shared_configs
+            ):
+                allowed_shared_config_ids.append(
+                    int(direct_assignment["llm_config_id"])
+                )
+
+            for group in self.list_groups_for_user(user_id):
+                group_config_id = self.get_group_llm_assignment(group["id"])
+                if group_config_id in active_shared_configs:
+                    allowed_shared_config_ids.append(group_config_id)
+
+            allowed_shared_config_ids = sorted(set(allowed_shared_config_ids))
 
         assigned = self.get_assigned_shared_llm(user_id)
+        selected_shared_config_id = (
+            int(assigned["shared_config_id"])
+            if assigned and assigned.get("shared_config_id") is not None
+            else None
+        )
+        selected_shared_config_name = (
+            str(assigned.get("shared_config_name", "")) if assigned else None
+        )
+
+        from storage.result_store import result_store
+        from app.config import settings
+
+        configured_only = result_store.is_configured_only()
+        env_api_key = (settings.llm_api_key or "").strip()
+        env_model = settings.llm_model or "gpt-4o"
+        env_base_url = _normalize_base_url(settings.llm_base_url or "")
+
+        if personal_api_key and ((user and user.get("is_admin")) or can_use_personal):
+            return {
+                "user_id": user_id,
+                "api_key": personal_api_key,
+                "model": personal_model,
+                "base_url": personal_base_url,
+                "source": "personal",
+                "fingerprint": self._build_llm_fingerprint(
+                    source="personal",
+                    api_key=personal_api_key,
+                    model=personal_model,
+                    base_url=personal_base_url,
+                    user_id=user_id,
+                ),
+                "can_use_personal_llm": can_use_personal,
+                "can_use_shared_llm": bool(allowed_shared_config_ids),
+                "configured_only": configured_only,
+                "allow_template_fallback": True,
+                "allowed_shared_config_ids": allowed_shared_config_ids,
+                "selected_shared_config_id": selected_shared_config_id,
+                "selected_shared_config_name": selected_shared_config_name,
+            }
+
         if assigned:
-            assigned["can_use_personal_llm"] = can_use_personal
-            return assigned
+            shared_api_key = (assigned.get("api_key") or "").strip()
+            shared_model = assigned.get("model") or ""
+            shared_base_url = _normalize_base_url(assigned.get("base_url") or "")
+            shared_source = assigned.get("source", "shared")
+            return {
+                "user_id": user_id,
+                "api_key": shared_api_key,
+                "model": shared_model,
+                "base_url": shared_base_url,
+                "source": shared_source,
+                "shared_config_id": selected_shared_config_id,
+                "shared_config_name": selected_shared_config_name,
+                "fingerprint": self._build_llm_fingerprint(
+                    source=shared_source,
+                    api_key=shared_api_key,
+                    model=shared_model,
+                    base_url=shared_base_url,
+                    user_id=user_id,
+                    shared_config_id=selected_shared_config_id,
+                ),
+                "can_use_personal_llm": can_use_personal,
+                "can_use_shared_llm": bool(allowed_shared_config_ids),
+                "configured_only": configured_only,
+                "allow_template_fallback": True,
+                "allowed_shared_config_ids": allowed_shared_config_ids,
+                "selected_shared_config_id": selected_shared_config_id,
+                "selected_shared_config_name": selected_shared_config_name,
+            }
+
+        if env_api_key and not configured_only:
+            return {
+                "user_id": user_id,
+                "api_key": env_api_key,
+                "model": env_model,
+                "base_url": env_base_url,
+                "source": "env",
+                "fingerprint": self._build_llm_fingerprint(
+                    source="env",
+                    api_key=env_api_key,
+                    model=env_model,
+                    base_url=env_base_url,
+                    user_id=user_id,
+                ),
+                "can_use_personal_llm": can_use_personal,
+                "can_use_shared_llm": bool(allowed_shared_config_ids),
+                "configured_only": configured_only,
+                "allow_template_fallback": True,
+                "allowed_shared_config_ids": allowed_shared_config_ids,
+                "selected_shared_config_id": selected_shared_config_id,
+                "selected_shared_config_name": selected_shared_config_name,
+            }
 
         return {
             "user_id": user_id,
@@ -504,9 +647,24 @@ class AdminDB:
             "model": "",
             "base_url": "",
             "source": "template",
-            "fingerprint": f"template:{user_id}",
+            "fingerprint": self._build_llm_fingerprint(
+                source="template",
+                api_key="",
+                model="",
+                base_url="",
+                user_id=user_id,
+            ),
             "can_use_personal_llm": can_use_personal,
+            "can_use_shared_llm": bool(allowed_shared_config_ids),
+            "configured_only": configured_only,
+            "allow_template_fallback": True,
+            "allowed_shared_config_ids": allowed_shared_config_ids,
+            "selected_shared_config_id": selected_shared_config_id,
+            "selected_shared_config_name": selected_shared_config_name,
         }
+
+    def get_llm_settings(self, user_id: int) -> dict[str, Any]:
+        return self.resolve_effective_llm_access(user_id)
 
     def save_llm_settings(
         self,
@@ -736,15 +894,23 @@ class AdminDB:
                 (user_id,),
             ).fetchone()
             if direct:
+                api_key = self._decrypt_secret(direct["encrypted_api_key"])
                 return {
                     "user_id": user_id,
-                    "api_key": self._decrypt_secret(direct["encrypted_api_key"]),
+                    "api_key": api_key,
                     "model": direct["model"],
-                    "base_url": direct["base_url"],
+                    "base_url": _normalize_base_url(direct["base_url"]),
                     "source": "shared-user",
                     "shared_config_id": direct["id"],
                     "shared_config_name": direct["name"],
-                    "fingerprint": f"shared:{direct['id']}:{direct['model']}:{direct['base_url']}",
+                    "fingerprint": self._build_llm_fingerprint(
+                        source="shared-user",
+                        api_key=api_key,
+                        model=direct["model"],
+                        base_url=direct["base_url"],
+                        user_id=user_id,
+                        shared_config_id=int(direct["id"]),
+                    ),
                 }
 
             group_row = conn.execute(
@@ -760,17 +926,25 @@ class AdminDB:
             ).fetchone()
 
         if group_row:
+            api_key = self._decrypt_secret(group_row["encrypted_api_key"])
             return {
                 "user_id": user_id,
-                "api_key": self._decrypt_secret(group_row["encrypted_api_key"]),
+                "api_key": api_key,
                 "model": group_row["model"],
-                "base_url": group_row["base_url"],
+                "base_url": _normalize_base_url(group_row["base_url"]),
                 "source": "shared-group",
                 "shared_config_id": group_row["id"],
                 "shared_config_name": group_row["name"],
                 "group_id": group_row["group_id"],
                 "group_name": group_row["group_name"],
-                "fingerprint": f"shared:{group_row['id']}:{group_row['model']}:{group_row['base_url']}",
+                "fingerprint": self._build_llm_fingerprint(
+                    source="shared-group",
+                    api_key=api_key,
+                    model=group_row["model"],
+                    base_url=group_row["base_url"],
+                    user_id=user_id,
+                    shared_config_id=int(group_row["id"]),
+                ),
             }
         return None
 
