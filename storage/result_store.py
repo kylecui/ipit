@@ -27,8 +27,8 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-# Default DB path: <project_root>/storage/results.db
-_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "results.db")
+# Default DB path: stored under data/ to avoid Docker volume shadowing code
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "results.db")
 
 # Default staleness threshold in days
 DEFAULT_STALENESS_DAYS = 7
