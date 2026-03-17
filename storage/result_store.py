@@ -418,8 +418,8 @@ class ResultStore:
         """Return report history for comparison."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                """SELECT id, ip, user_id, snapshot_id, llm_enhanced, lang,
-                          generated_at, is_archived
+                """SELECT id, ip, user_id, snapshot_id, llm_enhanced, llm_source, lang,
+                           generated_at, is_archived
                    FROM stored_reports
                    WHERE ip = ? AND user_id = ?
                    ORDER BY generated_at DESC
