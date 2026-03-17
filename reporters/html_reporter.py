@@ -52,9 +52,104 @@ class HTMLReporter:
                 key=lambda e: e.score_delta, reverse=True
             )
 
+        raw_sources = verdict.raw_sources or {}
+        rdap = raw_sources.get("rdap", {}) if isinstance(raw_sources, dict) else {}
+        reverse_dns = (
+            raw_sources.get("reverse_dns", {}) if isinstance(raw_sources, dict) else {}
+        )
+        virustotal = (
+            raw_sources.get("virustotal", {}) if isinstance(raw_sources, dict) else {}
+        )
+        abuseipdb = (
+            raw_sources.get("abuseipdb", {}) if isinstance(raw_sources, dict) else {}
+        )
+        shodan = raw_sources.get("shodan", {}) if isinstance(raw_sources, dict) else {}
+
+        rdap_data = rdap.get("data", {}) if isinstance(rdap, dict) else {}
+        rdns_data = reverse_dns.get("data", {}) if isinstance(reverse_dns, dict) else {}
+        vt_data = virustotal.get("data", {}) if isinstance(virustotal, dict) else {}
+        abuse_data = abuseipdb.get("data", {}) if isinstance(abuseipdb, dict) else {}
+        shodan_data = shodan.get("data", {}) if isinstance(shodan, dict) else {}
+
+        ownership_fields = [
+            {"label": "narrative.organization", "value": rdap_data.get("name")},
+            {"label": "narrative.asn", "value": rdap_data.get("asn")},
+            {"label": "narrative.country", "value": rdap_data.get("country")},
+            {"label": "narrative.network", "value": rdap_data.get("network")},
+            {"label": "narrative.reverse_dns", "value": rdns_data.get("hostname")},
+            {
+                "label": "narrative.aliases",
+                "value": ", ".join(rdns_data.get("aliases", []))
+                if rdns_data.get("aliases")
+                else None,
+            },
+            {
+                "label": "narrative.related_domains",
+                "value": ", ".join(vt_data.get("related_domains", []))
+                if vt_data.get("related_domains")
+                else None,
+            },
+            {"label": "narrative.isp", "value": abuse_data.get("isp")},
+            {"label": "narrative.usage_type", "value": abuse_data.get("usageType")},
+            {
+                "label": "narrative.ports",
+                "value": ", ".join(map(str, shodan_data.get("ports", [])))
+                if shodan_data.get("ports")
+                else None,
+            },
+        ]
+
+        source_status = [
+            {
+                "name": "RDAP",
+                "ok": bool(rdap.get("ok")) if isinstance(rdap, dict) else False,
+                "message": (rdap.get("error") if isinstance(rdap, dict) else None),
+            },
+            {
+                "name": "Reverse DNS",
+                "ok": bool(reverse_dns.get("ok"))
+                if isinstance(reverse_dns, dict)
+                else False,
+                "message": (
+                    rdns_data.get("error")
+                    if isinstance(rdns_data, dict) and rdns_data.get("error")
+                    else (
+                        reverse_dns.get("error")
+                        if isinstance(reverse_dns, dict)
+                        else None
+                    )
+                ),
+            },
+            {
+                "name": "VirusTotal",
+                "ok": bool(virustotal.get("ok"))
+                if isinstance(virustotal, dict)
+                else False,
+                "message": (
+                    virustotal.get("error") if isinstance(virustotal, dict) else None
+                ),
+            },
+            {
+                "name": "AbuseIPDB",
+                "ok": bool(abuseipdb.get("ok"))
+                if isinstance(abuseipdb, dict)
+                else False,
+                "message": (
+                    abuseipdb.get("error") if isinstance(abuseipdb, dict) else None
+                ),
+            },
+            {
+                "name": "Shodan",
+                "ok": bool(shodan.get("ok")) if isinstance(shodan, dict) else False,
+                "message": (shodan.get("error") if isinstance(shodan, dict) else None),
+            },
+        ]
+
         return {
             "verdict": verdict,
             "evidence_by_category": evidence_by_category,
+            "ownership_fields": ownership_fields,
+            "source_status": source_status,
             "t": i18n.get_translator(lang),
             "lang": lang,
             "severity_colors": {
