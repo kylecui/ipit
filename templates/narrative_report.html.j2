@@ -173,6 +173,12 @@
 
 <div class="report-container">
 
+{% if llm_fallback %}
+<div class="alert alert-info mt-3" role="alert">
+    <strong>{{ t('narrative.llm_fallback_title') }}</strong> — {{ t('narrative.llm_fallback_message') }}
+</div>
+{% endif %}
+
 <!-- ===== STALENESS WARNING (data older than threshold) ===== -->
 {% if is_stale %}
 <div class="staleness-warning">

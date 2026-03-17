@@ -318,6 +318,7 @@ async def analyze_web(
     try:
         verdict = await service.analyze_ip(ip, refresh=refresh, user_id=user["id"])
         html_report = html_reporter.generate(verdict, lang=lang)
+        report_fallback_notice = request.query_params.get("report_fallback", "")
         response = templates.TemplateResponse(
             "dashboard.html.j2",
             {
@@ -325,6 +326,7 @@ async def analyze_web(
                 "verdict": verdict,
                 "html_report": html_report,
                 "ip": ip,
+                "report_fallback_notice": report_fallback_notice,
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
@@ -344,6 +346,7 @@ async def analyze_web(
                 "request": request,
                 "error": str(e),
                 "ip": ip,
+                "report_fallback_notice": "",
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
@@ -460,16 +463,11 @@ async def generate_report(
             except (ValueError, TypeError):
                 pass
 
-        html = await narrative_reporter.generate(
+        html, llm_used, llm_fallback = await narrative_reporter.generate(
             cached_verdict,
             lang=lang,
             llm_overrides=llm_settings,
             query_date=query_date,
-        )
-
-        llm_used = (
-            llm_settings.get("source") != "template"
-            and llm_settings.get("api_key", "") != ""
         )
 
         # Step 4: Persist the generated report
@@ -485,6 +483,15 @@ async def generate_report(
             lang=lang,
             snapshot_id=latest_snapshot.get("id") if latest_snapshot else None,
         )
+
+        if llm_fallback:
+            logger.warning(
+                "Report generation fell back to template mode (ip=%s, user=%s, source=%s, model=%s)",
+                ip,
+                user["id"],
+                llm_settings.get("source", "template"),
+                llm_settings.get("model", ""),
+            )
 
         return HTMLResponse(content=html)
     except HTTPException:

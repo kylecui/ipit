@@ -45,7 +45,7 @@ class NarrativeReporter:
         lang: str = "en",
         llm_overrides: Optional[Dict[str, Any]] = None,
         query_date: Optional[datetime] = None,
-    ) -> str:
+    ) -> tuple[str, bool, bool]:
         """
         Generate a detailed narrative report.
 
@@ -68,6 +68,10 @@ class NarrativeReporter:
         llm_sections: Dict[str, str] = {}
         llm_enhanced = False
         overrides = llm_overrides or {}
+        llm_requested = bool(
+            overrides
+            and (overrides.get("api_key") or overrides.get("source") != "template")
+        )
         if llm_client.is_enabled(overrides):
             logger.info(
                 "Attempting LLM enhancement for report (ip=%s, lang=%s, source=%s, model=%s)",
@@ -137,20 +141,25 @@ class NarrativeReporter:
             days_old = delta.days
             is_stale = days_old >= staleness_days
 
-        return template.render(
-            verdict=verdict,
-            source_data=source_data,
-            llm_sections=llm_sections,
-            fallback_sections=fallback_sections,
-            llm_enhanced=llm_enhanced,
-            t=t,
-            lang=lang,
-            timestamp=report_generated_at,
-            query_date=query_date_str,
-            report_generated_at=report_generated_at,
-            is_stale=is_stale,
-            staleness_days=staleness_days,
-            days_old=days_old,
+        return (
+            template.render(
+                verdict=verdict,
+                source_data=source_data,
+                llm_sections=llm_sections,
+                fallback_sections=fallback_sections,
+                llm_enhanced=llm_enhanced,
+                llm_fallback=llm_requested and not llm_enhanced,
+                t=t,
+                lang=lang,
+                timestamp=report_generated_at,
+                query_date=query_date_str,
+                report_generated_at=report_generated_at,
+                is_stale=is_stale,
+                staleness_days=staleness_days,
+                days_old=days_old,
+            ),
+            llm_enhanced,
+            llm_requested and not llm_enhanced,
         )
 
     # ------------------------------------------------------------------
