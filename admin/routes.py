@@ -776,6 +776,7 @@ async def user_list(request: Request):
     plugin_permissions = {
         u["id"]: admin_db.list_user_plugin_permissions(u["id"]) for u in users
     }
+    llm_allowlists = {u["id"]: admin_db.list_user_llm_allowlist(u["id"]) for u in users}
     shared_llm_configs = admin_db.list_shared_llm_configs()
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
@@ -786,6 +787,7 @@ async def user_list(request: Request):
             users=users,
             groups=groups,
             plugin_permissions=plugin_permissions,
+            llm_allowlists=llm_allowlists,
             shared_llm_configs=shared_llm_configs,
             plugins=PLUGIN_API_KEY_REGISTRY,
             msg=msg,
@@ -915,13 +917,20 @@ async def user_plugin_permissions_save(request: Request, user_id: int):
             None if value == "inherit" or value is None else _parse_bool(str(value))
         )
         admin_db.set_user_plugin_permission(user_id, plugin["plugin_name"], allowed)
+    for item in admin_db.list_shared_llm_configs():
+        field = f"llmperm_{item['id']}"
+        value = form.get(field)
+        allowed = (
+            None if value == "inherit" or value is None else _parse_bool(str(value))
+        )
+        admin_db.set_user_llm_allowlist(user_id, int(item["id"]), allowed)
     admin_db.log_action(
         user["id"],
         "user_plugin_permissions",
-        f"Updated shared-plugin permissions for user #{user_id}",
+        f"Updated shared-plugin and shared-LLM permissions for user #{user_id}",
     )
     return RedirectResponse(
-        f"{settings.root_path}/admin/users?msg=User+plugin+permissions+updated",
+        f"{settings.root_path}/admin/users?msg=User+permissions+updated",
         status_code=303,
     )
 
@@ -933,6 +942,9 @@ async def group_list(request: Request):
         return login_redirect(request)
     groups = admin_db.list_groups()
     shared_llm_configs = admin_db.list_shared_llm_configs()
+    group_llm_allowlists = {
+        group["id"]: admin_db.list_group_llm_allowlist(group["id"]) for group in groups
+    }
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
         "admin/groups.html.j2",
@@ -942,6 +954,7 @@ async def group_list(request: Request):
             groups=groups,
             plugins=PLUGIN_API_KEY_REGISTRY,
             shared_llm_configs=shared_llm_configs,
+            group_llm_allowlists=group_llm_allowlists,
             msg=msg,
         ),
     )
@@ -986,6 +999,13 @@ async def group_edit(request: Request, group_id: int):
         )
         admin_db.set_group_plugin_permission(group_id, plugin["plugin_name"], allowed)
         group_plugin_permissions[plugin["plugin_name"]] = allowed
+    for item in admin_db.list_shared_llm_configs():
+        field = f"llmperm_{item['id']}"
+        value = form.get(field)
+        allowed = (
+            None if value == "inherit" or value is None else _parse_bool(str(value))
+        )
+        admin_db.set_group_llm_allowlist(group_id, int(item["id"]), allowed)
     admin_db.update_group(
         group_id, name=name, description=description, priority=priority
     )
