@@ -95,6 +95,11 @@
                     🔑 {{ t('admin.shared_api_keys') }}
                 </a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link {% block nav_groups %}{% endblock %}" href="{{ root_path }}/admin/groups">
+                    🧩 {{ t('admin.policy_groups') }}
+                </a>
+            </li>
             {% endif %}
             <li class="nav-item">
                 <a class="nav-link {% block nav_my_api_keys %}{% endblock %}" href="{{ root_path }}/admin/settings/my-api-keys">

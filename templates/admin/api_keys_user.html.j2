@@ -18,7 +18,7 @@
             <div class="card-body">
                 <p class="text-muted mb-2">{{ t('admin.personal_keys_info') }}</p>
                 <hr>
-                <p class="text-muted mb-0"><small>{{ t('admin.key_fallback_info') }}</small></p>
+                <p class="text-muted mb-0"><small>{{ t('admin.configured_key_info') }}</small></p>
             </div>
         </div>
     </div>
@@ -37,6 +37,7 @@
                         <th>{{ t('admin.plugin_name') }}</th>
                         <th>{{ t('admin.key_status') }}</th>
                         <th class="text-center" style="min-width: 120px;">{{ t('admin.status') }}</th>
+                        <th>{{ t('admin.shared_access') }}</th>
                         <th style="min-width: 320px;">{{ t('admin.api_key') }}</th>
                         <th>{{ t('admin.actions') }}</th>
                     </tr>
@@ -68,6 +69,15 @@
                             <span class="text-success">&#10003;</span>
                             {% else %}
                             <span class="text-muted">&#8212;</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if shared_access.get(plugin.plugin_name) == true %}
+                            <span class="badge bg-info text-dark">{{ t('admin.shared_allowed') }}</span>
+                            {% elif shared_access.get(plugin.plugin_name) == false %}
+                            <span class="badge bg-secondary">{{ t('admin.shared_denied') }}</span>
+                            {% else %}
+                            <span class="text-muted">{{ t('admin.inherit') }}</span>
                             {% endif %}
                         </td>
                         <td>
