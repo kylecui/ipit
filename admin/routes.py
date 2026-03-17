@@ -776,6 +776,9 @@ async def user_list(request: Request):
     plugin_permissions = {
         u["id"]: admin_db.list_user_plugin_permissions(u["id"]) for u in users
     }
+    user_personal_llm_permissions = {
+        u["id"]: admin_db.get_user_personal_llm_permission(u["id"]) for u in users
+    }
     llm_allowlists = {u["id"]: admin_db.list_user_llm_allowlist(u["id"]) for u in users}
     shared_llm_configs = admin_db.list_shared_llm_configs()
     msg = request.query_params.get("msg", "")
@@ -787,6 +790,7 @@ async def user_list(request: Request):
             users=users,
             groups=groups,
             plugin_permissions=plugin_permissions,
+            user_personal_llm_permissions=user_personal_llm_permissions,
             llm_allowlists=llm_allowlists,
             shared_llm_configs=shared_llm_configs,
             plugins=PLUGIN_API_KEY_REGISTRY,
@@ -910,6 +914,13 @@ async def user_plugin_permissions_save(request: Request, user_id: int):
     if not user or not user.get("is_admin"):
         return login_redirect(request)
     form = await request.form()
+    personal_llm_value = form.get("personal_llm")
+    personal_llm_allowed = (
+        None
+        if personal_llm_value == "inherit" or personal_llm_value is None
+        else _parse_bool(str(personal_llm_value))
+    )
+    admin_db.set_user_personal_llm_permission(user_id, personal_llm_allowed)
     for plugin in PLUGIN_API_KEY_REGISTRY:
         field = f"perm_{plugin['plugin_name']}"
         value = form.get(field)
@@ -942,6 +953,10 @@ async def group_list(request: Request):
         return login_redirect(request)
     groups = admin_db.list_groups()
     shared_llm_configs = admin_db.list_shared_llm_configs()
+    group_personal_llm_permissions = {
+        group["id"]: admin_db.get_group_personal_llm_permission(group["id"])
+        for group in groups
+    }
     group_llm_allowlists = {
         group["id"]: admin_db.list_group_llm_allowlist(group["id"]) for group in groups
     }
@@ -954,6 +969,7 @@ async def group_list(request: Request):
             groups=groups,
             plugins=PLUGIN_API_KEY_REGISTRY,
             shared_llm_configs=shared_llm_configs,
+            group_personal_llm_permissions=group_personal_llm_permissions,
             group_llm_allowlists=group_llm_allowlists,
             msg=msg,
         ),
@@ -990,7 +1006,14 @@ async def group_edit(request: Request, group_id: int):
     description = str(form.get("description", "")).strip()
     priority = int(str(form.get("priority", "100") or "100"))
     llm_config_id = str(form.get("shared_llm_config_id", "")).strip()
+    personal_llm_value = form.get("personal_llm")
+    personal_llm_allowed = (
+        None
+        if personal_llm_value == "inherit" or personal_llm_value is None
+        else _parse_bool(str(personal_llm_value))
+    )
     group_plugin_permissions = {}
+    admin_db.set_group_personal_llm_permission(group_id, personal_llm_allowed)
     for plugin in PLUGIN_API_KEY_REGISTRY:
         field = f"perm_{plugin['plugin_name']}"
         value = form.get(field)

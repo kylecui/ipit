@@ -66,6 +66,11 @@
                                     </select>
                                 </div>
                                 <div class="col-12 d-flex flex-wrap gap-2">
+                                    <select class="form-select form-select-sm" name="personal_llm" style="width:auto; max-width: 260px;">
+                                        <option value="inherit" {% if group_personal_llm_permissions[group.id] is none %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.inherit') }}</option>
+                                        <option value="true" {% if group_personal_llm_permissions[group.id] == true %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.shared_allowed') }}</option>
+                                        <option value="false" {% if group_personal_llm_permissions[group.id] == false %}selected{% endif %}>{{ t('admin.personal_llm_access') }}: {{ t('admin.shared_denied') }}</option>
+                                    </select>
                                     {% for plugin in plugins %}
                                     <select class="form-select form-select-sm" name="perm_{{ plugin.plugin_name }}" style="width:auto; max-width: 220px;">
                                         <option value="inherit" {% if group.plugin_permissions.get(plugin.plugin_name) is none %}selected{% endif %}>{{ plugin.display_name }}: {{ t('admin.inherit') }}</option>
