@@ -153,6 +153,13 @@
                                     <option value="false" {% if plugin_permissions[u.id].get(plugin.plugin_name) == false %}selected{% endif %}>{{ plugin.display_name }}: {{ t('admin.shared_denied') }}</option>
                                 </select>
                                 {% endfor %}
+                                {% for item in shared_llm_configs %}
+                                <select class="form-select form-select-sm" name="llmperm_{{ item.id }}" style="width:auto; max-width: 240px;">
+                                    <option value="inherit" {% if llm_allowlists[u.id].get(item.id) is none %}selected{% endif %}>{{ item.name }}: {{ t('admin.inherit') }}</option>
+                                    <option value="true" {% if llm_allowlists[u.id].get(item.id) == true %}selected{% endif %}>{{ item.name }}: {{ t('admin.shared_allowed') }}</option>
+                                    <option value="false" {% if llm_allowlists[u.id].get(item.id) == false %}selected{% endif %}>{{ item.name }}: {{ t('admin.shared_denied') }}</option>
+                                </select>
+                                {% endfor %}
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">{{ t('admin.save') }}</button>
                             </form>
                             {% if u.id != user.id %}
