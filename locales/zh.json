@@ -264,6 +264,7 @@
     "admin.create_group": "创建策略组",
     "admin.shared_llm_configs": "共享 LLM 配置",
     "admin.shared_llm_assignment": "共享 LLM 分配",
+    "admin.personal_llm_access": "个人 LLM 权限",
     "admin.shared_llm_assignment_hint": "如果已选择，该共享 LLM 配置会在个人 LLM 设置之外提供给该用户使用。",
     "admin.no_shared_llm": "不使用共享 LLM",
     "admin.personal_llm_disabled": "管理员策略已禁用你账户的个人 LLM 配置。你只能使用管理员分配的共享 LLM（如果已分配）。",

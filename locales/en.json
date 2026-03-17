@@ -264,6 +264,7 @@
     "admin.create_group": "Create Group",
     "admin.shared_llm_configs": "Shared LLM Configs",
     "admin.shared_llm_assignment": "Shared LLM Assignment",
+    "admin.personal_llm_access": "Personal LLM Access",
     "admin.shared_llm_assignment_hint": "If selected, this shared LLM config is available to the user in addition to any personal LLM settings.",
     "admin.no_shared_llm": "No shared LLM",
     "admin.personal_llm_disabled": "Personal LLM configuration is disabled for your account by admin policy. You can only use an admin-assigned shared LLM, if one is assigned.",
