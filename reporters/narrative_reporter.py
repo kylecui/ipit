@@ -10,7 +10,7 @@ Falls back to template-only mode when LLM is unavailable.
 
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader
@@ -88,7 +88,7 @@ class NarrativeReporter:
         t = i18n.get_translator(lang)
 
         # Timestamp handling
-        now = datetime.now()
+        now = datetime.now(UTC)
         report_generated_at = now.strftime("%Y-%m-%d %H:%M:%S")
         query_date_str = (
             query_date.strftime("%Y-%m-%d %H:%M:%S") if query_date else None
