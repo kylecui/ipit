@@ -17,6 +17,7 @@ from starlette.responses import StreamingResponse
 
 from admin.auth import get_current_user, login_redirect
 from admin.database import admin_db
+from admin.log_handler import LogStore
 from app.config import settings
 from app.i18n import i18n
 from storage.result_store import result_store
@@ -94,6 +95,9 @@ def _get_all_plugins_info() -> list[dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Could not load plugin metadata: {e}")
 
+    shared_key_names = {
+        row["plugin_name"] for row in result_store.list_plugin_api_keys(user_id=0)
+    }
     result = []
     for name, cfg in plugin_configs.items():
         info = {
@@ -111,9 +115,7 @@ def _get_all_plugins_info() -> list[dict[str, Any]]:
             info.setdefault("description", "")
             info.setdefault("requires_api_key", bool(cfg.get("api_key_env")))
             info.setdefault("api_key_env_var", cfg.get("api_key_env"))
-        # Check if API key is actually set in environment
-        env_var = info.get("api_key_env_var") or cfg.get("api_key_env")
-        info["api_key_configured"] = bool(os.environ.get(env_var or ""))
+        info["api_key_configured"] = name in shared_key_names
         info["is_community"] = name in community_names
         result.append(info)
     return result
@@ -216,6 +218,22 @@ def _admin_context(request: Request, user: dict, **extra: Any) -> dict[str, Any]
         "root_path": settings.root_path,
         **extra,
     }
+
+
+def _parse_bool(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "on", "yes"}
+
+
+def _parse_int_list(values: list[str] | None) -> list[int]:
+    result: list[int] = []
+    for value in values or []:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            result.append(parsed)
+    return result
 
 
 # ── Auth routes ─────────────────────────────────────────────────
@@ -523,10 +541,19 @@ async def llm_settings_page(request: Request):
     if not user:
         return login_redirect(request)
     llm = admin_db.get_llm_settings(user["id"])
+    shared_llm_configs = admin_db.list_shared_llm_configs()
+    assignment = admin_db.get_user_llm_assignment(user["id"])
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
         "admin/llm_settings.html.j2",
-        _admin_context(request, user, llm=llm, msg=msg),
+        _admin_context(
+            request,
+            user,
+            llm=llm,
+            shared_llm_configs=shared_llm_configs,
+            selected_shared_llm_id=(assignment or {}).get("llm_config_id"),
+            msg=msg,
+        ),
     )
 
 
@@ -536,18 +563,68 @@ async def llm_settings_save(
     api_key: str = Form(""),
     model: str = Form("gpt-4o"),
     base_url: str = Form("https://api.openai.com/v1"),
+    shared_llm_config_id: str = Form(""),
 ):
     user = get_current_user(request)
     if not user:
         return login_redirect(request)
+    selected_shared_id = (
+        int(shared_llm_config_id) if shared_llm_config_id.strip() else None
+    )
     admin_db.save_llm_settings(
         user["id"], api_key=api_key, model=model, base_url=base_url
     )
+    admin_db.assign_shared_llm_to_user(user["id"], selected_shared_id)
     admin_db.log_action(
         user["id"], "llm_settings", f"Updated LLM settings (model: {model})"
     )
     return RedirectResponse(
         f"{settings.root_path}/admin/settings/llm?msg=LLM+settings+saved",
+        status_code=303,
+    )
+
+
+@router.post("/settings/llm/shared")
+async def shared_llm_save(
+    request: Request,
+    name: str = Form(...),
+    api_key: str = Form(""),
+    model: str = Form(...),
+    base_url: str = Form(...),
+    config_id: str = Form(""),
+    is_active: str = Form("true"),
+):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    admin_db.save_shared_llm_config(
+        name=name.strip(),
+        api_key=api_key,
+        model=model.strip(),
+        base_url=base_url.strip(),
+        config_id=int(config_id) if config_id.strip() else None,
+        is_active=_parse_bool(is_active),
+    )
+    admin_db.log_action(
+        user["id"], "shared_llm_save", f"Saved shared LLM config '{name}'"
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/llm?msg=Shared+LLM+config+saved",
+        status_code=303,
+    )
+
+
+@router.post("/settings/llm/shared/{config_id}/delete")
+async def shared_llm_delete(request: Request, config_id: int):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    admin_db.delete_shared_llm_config(config_id)
+    admin_db.log_action(
+        user["id"], "shared_llm_delete", f"Deleted shared LLM config #{config_id}"
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/settings/llm?msg=Shared+LLM+config+deleted",
         status_code=303,
     )
 
@@ -670,10 +747,24 @@ async def user_list(request: Request):
     if not user or not user.get("is_admin"):
         return login_redirect(request)
     users = admin_db.list_users()
+    groups = admin_db.list_groups()
+    plugin_permissions = {
+        u["id"]: admin_db.list_user_plugin_permissions(u["id"]) for u in users
+    }
+    shared_llm_configs = admin_db.list_shared_llm_configs()
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
         "admin/users.html.j2",
-        _admin_context(request, user, users=users, msg=msg),
+        _admin_context(
+            request,
+            user,
+            users=users,
+            groups=groups,
+            plugin_permissions=plugin_permissions,
+            shared_llm_configs=shared_llm_configs,
+            plugins=PLUGIN_API_KEY_REGISTRY,
+            msg=msg,
+        ),
     )
 
 
@@ -684,16 +775,23 @@ async def user_create(
     password: str = Form(...),
     display_name: str = Form(""),
     is_admin: bool = Form(False),
+    group_ids: list[str] = Form([]),
+    shared_llm_config_id: str = Form(""),
 ):
     user = get_current_user(request)
     if not user or not user.get("is_admin"):
         return login_redirect(request)
     try:
-        admin_db.create_user(
+        created_id = admin_db.create_user(
             username=username,
             password=password,
             display_name=display_name or username,
             is_admin=is_admin,
+        )
+        admin_db.set_user_groups(created_id, _parse_int_list(group_ids))
+        admin_db.assign_shared_llm_to_user(
+            created_id,
+            int(shared_llm_config_id) if shared_llm_config_id.strip() else None,
         )
         admin_db.log_action(user["id"], "user_create", f"Created user '{username}'")
         return RedirectResponse(
@@ -725,6 +823,166 @@ async def user_delete(request: Request, user_id: int):
         )
     return RedirectResponse(
         f"{settings.root_path}/admin/users?msg=User+deleted",
+        status_code=303,
+    )
+
+
+@router.post("/users/{user_id}/edit")
+async def user_edit(
+    request: Request,
+    user_id: int,
+    display_name: str = Form(...),
+    is_admin: str = Form("false"),
+    is_active: str = Form("true"),
+    group_ids: list[str] = Form([]),
+    shared_llm_config_id: str = Form(""),
+):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    target = admin_db.get_user_by_id(user_id)
+    if not target:
+        return RedirectResponse(
+            f"{settings.root_path}/admin/users?msg=User+not+found",
+            status_code=303,
+        )
+    new_is_admin = _parse_bool(is_admin)
+    new_is_active = _parse_bool(is_active)
+    if target["is_admin"] and (not new_is_admin or not new_is_active):
+        if admin_db.count_admin_users() <= 1:
+            return RedirectResponse(
+                f"{settings.root_path}/admin/users?msg=Cannot+disable+or+demote+the+last+active+admin",
+                status_code=303,
+            )
+    if user_id == user["id"] and not new_is_active:
+        return RedirectResponse(
+            f"{settings.root_path}/admin/users?msg=Cannot+disable+yourself",
+            status_code=303,
+        )
+    admin_db.update_user(
+        user_id,
+        display_name=display_name,
+        is_admin=new_is_admin,
+        is_active=new_is_active,
+    )
+    admin_db.set_user_groups(user_id, _parse_int_list(group_ids))
+    admin_db.assign_shared_llm_to_user(
+        user_id,
+        int(shared_llm_config_id) if shared_llm_config_id.strip() else None,
+    )
+    admin_db.log_action(user["id"], "user_edit", f"Updated user '{target['username']}'")
+    return RedirectResponse(
+        f"{settings.root_path}/admin/users?msg=User+updated",
+        status_code=303,
+    )
+
+
+@router.post("/users/{user_id}/permissions")
+async def user_plugin_permissions_save(request: Request, user_id: int):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    form = await request.form()
+    for plugin in PLUGIN_API_KEY_REGISTRY:
+        field = f"perm_{plugin['plugin_name']}"
+        value = form.get(field)
+        allowed = (
+            None if value == "inherit" or value is None else _parse_bool(str(value))
+        )
+        admin_db.set_user_plugin_permission(user_id, plugin["plugin_name"], allowed)
+    admin_db.log_action(
+        user["id"],
+        "user_plugin_permissions",
+        f"Updated shared-plugin permissions for user #{user_id}",
+    )
+    return RedirectResponse(
+        f"{settings.root_path}/admin/users?msg=User+plugin+permissions+updated",
+        status_code=303,
+    )
+
+
+@router.get("/groups", response_class=HTMLResponse)
+async def group_list(request: Request):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    groups = admin_db.list_groups()
+    shared_llm_configs = admin_db.list_shared_llm_configs()
+    msg = request.query_params.get("msg", "")
+    return templates.TemplateResponse(
+        "admin/groups.html.j2",
+        _admin_context(
+            request,
+            user,
+            groups=groups,
+            plugins=PLUGIN_API_KEY_REGISTRY,
+            shared_llm_configs=shared_llm_configs,
+            msg=msg,
+        ),
+    )
+
+
+@router.post("/groups/create")
+async def group_create(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    priority: int = Form(100),
+):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    admin_db.create_group(
+        name=name.strip(), description=description.strip(), priority=priority
+    )
+    admin_db.log_action(user["id"], "group_create", f"Created policy group '{name}'")
+    return RedirectResponse(
+        f"{settings.root_path}/admin/groups?msg=Group+created",
+        status_code=303,
+    )
+
+
+@router.post("/groups/{group_id}/edit")
+async def group_edit(request: Request, group_id: int):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    description = str(form.get("description", "")).strip()
+    priority = int(str(form.get("priority", "100") or "100"))
+    llm_config_id = str(form.get("shared_llm_config_id", "")).strip()
+    group_plugin_permissions = {}
+    for plugin in PLUGIN_API_KEY_REGISTRY:
+        field = f"perm_{plugin['plugin_name']}"
+        value = form.get(field)
+        allowed = (
+            None if value == "inherit" or value is None else _parse_bool(str(value))
+        )
+        admin_db.set_group_plugin_permission(group_id, plugin["plugin_name"], allowed)
+        group_plugin_permissions[plugin["plugin_name"]] = allowed
+    admin_db.update_group(
+        group_id, name=name, description=description, priority=priority
+    )
+    admin_db.assign_shared_llm_to_group(
+        group_id, int(llm_config_id) if llm_config_id else None
+    )
+    admin_db.log_action(user["id"], "group_edit", f"Updated policy group '{name}'")
+    return RedirectResponse(
+        f"{settings.root_path}/admin/groups?msg=Group+updated",
+        status_code=303,
+    )
+
+
+@router.post("/groups/{group_id}/delete")
+async def group_delete(request: Request, group_id: int):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return login_redirect(request)
+    admin_db.delete_group(group_id)
+    admin_db.log_action(user["id"], "group_delete", f"Deleted policy group #{group_id}")
+    return RedirectResponse(
+        f"{settings.root_path}/admin/groups?msg=Group+deleted",
         status_code=303,
     )
 
@@ -770,16 +1028,17 @@ async def log_stream(request: Request):
             {"ok": False, "error": "Not authenticated"}, status_code=401
         )
     level = request.query_params.get("level", "") or None
+    since_id = int(request.query_params.get("since_id", "0") or "0")
 
     async def _generate():
         store = LogStore()
-        async for entry in store.stream(level=level):
+        async for entry in store.stream(since_id=since_id, level=level):
             if await request.is_disconnected():
                 break
             if entry.get("keepalive"):
                 yield ": keepalive\n\n"
             else:
-                yield f"event: log\ndata: {json.dumps(entry)}\n\n"
+                yield f"id: {entry['id']}\nevent: log\ndata: {json.dumps(entry)}\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
 
@@ -850,11 +1109,13 @@ PLUGIN_API_KEY_REGISTRY: list[dict[str, Any]] = [
 
 def _get_plugin_key_registry() -> list[dict[str, Any]]:
     """Return the plugin API key registry with current configuration status."""
+    shared_keys = {
+        row["plugin_name"] for row in result_store.list_plugin_api_keys(user_id=0)
+    }
     registry = []
     for entry in PLUGIN_API_KEY_REGISTRY:
         info = dict(entry)
-        # Check if env var is configured
-        info["env_configured"] = bool(os.environ.get(entry["env_var"] or ""))
+        info["shared_configured"] = entry["plugin_name"] in shared_keys
         registry.append(info)
     return registry
 
@@ -873,6 +1134,7 @@ async def api_keys_admin_page(request: Request):
 
     shared_keys = result_store.list_plugin_api_keys(user_id=0)
     shared_keys_allowed = result_store.is_shared_keys_allowed()
+    configured_only = result_store.is_configured_only()
     registry = _get_plugin_key_registry()
     msg = request.query_params.get("msg", "")
 
@@ -883,6 +1145,7 @@ async def api_keys_admin_page(request: Request):
             user,
             shared_keys=shared_keys,
             shared_keys_allowed=shared_keys_allowed,
+            configured_only=configured_only,
             registry=registry,
             msg=msg,
         ),
@@ -940,13 +1203,18 @@ async def api_keys_admin_delete(request: Request, plugin_name: str):
 
 
 @router.post("/settings/api-keys/policy")
-async def api_keys_policy_toggle(request: Request, allow_shared: bool = Form(False)):
+async def api_keys_policy_toggle(
+    request: Request,
+    allow_shared: bool = Form(False),
+    configured_only: bool = Form(False),
+):
     """Toggle whether regular users may use admin-configured shared keys."""
     user = get_current_user(request)
     if not user or not user.get("is_admin"):
         return login_redirect(request)
 
     result_store.set_shared_keys_policy(allow_shared)
+    result_store.set_configured_only_policy(configured_only)
     status = "allowed" if allow_shared else "disallowed"
     admin_db.log_action(
         user["id"], "shared_key_policy", f"Shared key usage {status} for regular users"
@@ -969,6 +1237,12 @@ async def api_keys_user_page(request: Request):
 
     user_keys = result_store.list_plugin_api_keys(user_id=user["id"])
     registry = _get_plugin_key_registry()
+    shared_access = {
+        plugin["plugin_name"]: admin_db.can_user_use_shared_plugin(
+            user["id"], plugin["plugin_name"]
+        )
+        for plugin in PLUGIN_API_KEY_REGISTRY
+    }
     msg = request.query_params.get("msg", "")
 
     return templates.TemplateResponse(
@@ -978,6 +1252,7 @@ async def api_keys_user_page(request: Request):
             user,
             user_keys=user_keys,
             registry=registry,
+            shared_access=shared_access,
             msg=msg,
         ),
     )
