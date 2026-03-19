@@ -1,6 +1,4 @@
-"""
-HTML reporter for threat intelligence analysis results.
-"""
+"""HTML reporter for threat intelligence analysis results."""
 
 import os
 from typing import Dict, Any
@@ -11,6 +9,20 @@ from app.i18n import i18n
 
 class HTMLReporter:
     """Generates HTML reports from verdict data."""
+
+    SOURCE_DISPLAY_NAMES = {
+        "rdap": "RDAP",
+        "reverse_dns": "Reverse DNS",
+        "virustotal": "VirusTotal",
+        "abuseipdb": "AbuseIPDB",
+        "shodan": "Shodan",
+        "threatbook": "ThreatBook",
+        "tianjiyoumeng": "TianJi YouMeng",
+        "greynoise": "GreyNoise",
+        "otx": "AlienVault OTX",
+        "honeynet": "Honeynet",
+        "internal_flow": "Internal Flow",
+    }
 
     def __init__(self):
         template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -99,51 +111,7 @@ class HTMLReporter:
             },
         ]
 
-        source_status = [
-            {
-                "name": "RDAP",
-                "ok": bool(rdap.get("ok")) if isinstance(rdap, dict) else False,
-                "message": (rdap.get("error") if isinstance(rdap, dict) else None),
-            },
-            {
-                "name": "Reverse DNS",
-                "ok": bool(reverse_dns.get("ok"))
-                if isinstance(reverse_dns, dict)
-                else False,
-                "message": (
-                    rdns_data.get("error")
-                    if isinstance(rdns_data, dict) and rdns_data.get("error")
-                    else (
-                        reverse_dns.get("error")
-                        if isinstance(reverse_dns, dict)
-                        else None
-                    )
-                ),
-            },
-            {
-                "name": "VirusTotal",
-                "ok": bool(virustotal.get("ok"))
-                if isinstance(virustotal, dict)
-                else False,
-                "message": (
-                    virustotal.get("error") if isinstance(virustotal, dict) else None
-                ),
-            },
-            {
-                "name": "AbuseIPDB",
-                "ok": bool(abuseipdb.get("ok"))
-                if isinstance(abuseipdb, dict)
-                else False,
-                "message": (
-                    abuseipdb.get("error") if isinstance(abuseipdb, dict) else None
-                ),
-            },
-            {
-                "name": "Shodan",
-                "ok": bool(shodan.get("ok")) if isinstance(shodan, dict) else False,
-                "message": (shodan.get("error") if isinstance(shodan, dict) else None),
-            },
-        ]
+        source_status = self._build_source_status(raw_sources)
 
         return {
             "verdict": verdict,
@@ -166,3 +134,31 @@ class HTMLReporter:
                 "Inconclusive": "secondary",
             },
         }
+
+    def _build_source_status(self, raw_sources: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build per-source status rows from all available raw sources."""
+        if not isinstance(raw_sources, dict):
+            return []
+
+        source_status: list[dict[str, Any]] = []
+        for source_key, payload in raw_sources.items():
+            data = payload.get("data", {}) if isinstance(payload, dict) else {}
+            message = None
+            if isinstance(payload, dict):
+                message = payload.get("error")
+                if not message and isinstance(data, dict):
+                    message = data.get("error")
+
+            source_status.append(
+                {
+                    "name": self.SOURCE_DISPLAY_NAMES.get(
+                        source_key, source_key.replace("_", " ").title()
+                    ),
+                    "ok": bool(payload.get("ok"))
+                    if isinstance(payload, dict)
+                    else False,
+                    "message": message,
+                }
+            )
+
+        return source_status

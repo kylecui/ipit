@@ -69,6 +69,7 @@
                         <th>{{ t('admin.plugin_name') }}</th>
                         <th>{{ t('admin.key_status') }}</th>
                         <th>{{ t('admin.config_source') }}</th>
+                        <th>{{ t('admin.usage_30d') }}</th>
                         <th class="text-center" style="min-width: 120px;">{{ t('admin.status') }}</th>
                         <th style="min-width: 320px;">{{ t('admin.api_key') }}</th>
                         <th>{{ t('admin.actions') }}</th>
@@ -101,6 +102,17 @@
                             <small class="text-success">{{ t('admin.shared_key_available') }}</small>
                             {% else %}
                             <small class="text-muted">{{ t('admin.shared_key_missing') }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set usage = plugin_usage_by_name.get(plugin.plugin_name) %}
+                            {% if usage %}
+                            <small>
+                                {{ usage.calls }} {{ t('admin.calls') }}<br>
+                                {{ t('admin.success_rate_label') }}: {{ '%.0f'|format((usage.success_rate or 0) * 100) }}%
+                            </small>
+                            {% else %}
+                            <small class="text-muted">{{ t('admin.no_usage_yet') }}</small>
                             {% endif %}
                         </td>
                         <td class="text-center">
@@ -149,6 +161,21 @@
         </div>
     </div>
 </div>
+
+{% if usage_snapshot %}
+<div class="card mt-4">
+    <div class="card-header">
+        <h6 class="mb-0">{{ t('admin.api_usage') }} · 30d</h6>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4"><strong>{{ t('admin.calls') }}:</strong> {{ usage_snapshot.plugin_overview.calls }}</div>
+            <div class="col-md-4"><strong>{{ t('admin.success_rate_label') }}:</strong> {{ '%.0f'|format((usage_snapshot.plugin_overview.success_rate or 0) * 100) }}%</div>
+            <div class="col-md-4"><strong>{{ t('admin.avg_latency_ms') }}:</strong> {{ usage_snapshot.plugin_overview.avg_latency_ms if usage_snapshot.plugin_overview.avg_latency_ms is not none else '—' }}</div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

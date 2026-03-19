@@ -50,6 +50,31 @@
     </div>
 </div>
 
+{% if usage_snapshot %}
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">📡 {{ t('admin.api_usage') }}</h6>
+                <h3 class="card-title">{{ usage_snapshot.plugin_overview.calls }}</h3>
+                <p class="card-text text-muted mb-1">{{ t('admin.plugin_api_calls_30d') }}</p>
+                <small class="text-muted">{{ t('admin.success_rate_label') }}: {{ '%.0f'|format((usage_snapshot.plugin_overview.success_rate or 0) * 100) }}%</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">🤖 {{ t('admin.llm_usage') }}</h6>
+                <h3 class="card-title">{{ usage_snapshot.llm_overview.calls }}</h3>
+                <p class="card-text text-muted mb-1">{{ t('admin.llm_calls_30d') }}</p>
+                <small class="text-muted">{{ t('admin.total_tokens') }}: {{ usage_snapshot.llm_overview.total_tokens }}</small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if user.is_admin and recent_logs %}
 <div class="card">
     <div class="card-header">

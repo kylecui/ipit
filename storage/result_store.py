@@ -154,6 +154,51 @@ class ResultStore:
                     configured_only     INTEGER NOT NULL DEFAULT 1,
                     updated_at          TEXT    NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS plugin_usage_events (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin_name     TEXT    NOT NULL,
+                    user_id         INTEGER,
+                    key_scope       TEXT    NOT NULL DEFAULT 'none',
+                    success         INTEGER NOT NULL DEFAULT 0,
+                    latency_ms      INTEGER,
+                    status_code     INTEGER,
+                    error_message   TEXT    NOT NULL DEFAULT '',
+                    created_at      TEXT    NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_plugin_usage_events_plugin
+                    ON plugin_usage_events(plugin_name);
+                CREATE INDEX IF NOT EXISTS idx_plugin_usage_events_user
+                    ON plugin_usage_events(user_id);
+                CREATE INDEX IF NOT EXISTS idx_plugin_usage_events_created
+                    ON plugin_usage_events(created_at);
+
+                CREATE TABLE IF NOT EXISTS llm_usage_events (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id         INTEGER,
+                    source          TEXT    NOT NULL DEFAULT 'template',
+                    fingerprint     TEXT    NOT NULL DEFAULT '',
+                    shared_config_id INTEGER,
+                    model           TEXT    NOT NULL DEFAULT '',
+                    base_url        TEXT    NOT NULL DEFAULT '',
+                    success         INTEGER NOT NULL DEFAULT 0,
+                    latency_ms      INTEGER,
+                    input_tokens    INTEGER NOT NULL DEFAULT 0,
+                    output_tokens   INTEGER NOT NULL DEFAULT 0,
+                    total_tokens    INTEGER NOT NULL DEFAULT 0,
+                    status_code     INTEGER,
+                    error_message   TEXT    NOT NULL DEFAULT '',
+                    request_id      TEXT    NOT NULL DEFAULT '',
+                    created_at      TEXT    NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_events_user
+                    ON llm_usage_events(user_id);
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_events_fingerprint
+                    ON llm_usage_events(fingerprint);
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created
+                    ON llm_usage_events(created_at);
             """)
             columns = {
                 row["name"]
@@ -176,6 +221,16 @@ class ResultStore:
             if "configured_only" not in policy_columns:
                 conn.execute(
                     "ALTER TABLE admin_key_policy ADD COLUMN configured_only INTEGER NOT NULL DEFAULT 1"
+                )
+            llm_usage_columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(llm_usage_events)"
+                ).fetchall()
+            }
+            if llm_usage_columns and "shared_config_id" not in llm_usage_columns:
+                conn.execute(
+                    "ALTER TABLE llm_usage_events ADD COLUMN shared_config_id INTEGER"
                 )
             # Ensure a default policy row exists
             row = conn.execute("SELECT COUNT(*) FROM admin_key_policy").fetchone()
@@ -216,7 +271,7 @@ class ResultStore:
                     now,
                 ),
             )
-            return cursor.lastrowid  # type: ignore[return-value]
+            return int(cursor.lastrowid or 0)
 
     def get_latest_snapshot(
         self,
@@ -379,7 +434,7 @@ class ResultStore:
                     now,
                 ),
             )
-            return cursor.lastrowid  # type: ignore[return-value]
+            return int(cursor.lastrowid or 0)
 
     def get_latest_report(
         self,
@@ -550,6 +605,386 @@ class ResultStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # ── API Usage Metrics ─────────────────────────────────────────────
+
+    def record_plugin_usage(
+        self,
+        *,
+        plugin_name: str,
+        user_id: int | None,
+        key_scope: str,
+        success: bool,
+        latency_ms: int | None = None,
+        status_code: int | None = None,
+        error_message: str = "",
+    ) -> int:
+        """Persist a plugin API usage event without storing secrets."""
+        now = _utc_now_iso()
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO plugin_usage_events
+                   (plugin_name, user_id, key_scope, success, latency_ms, status_code,
+                    error_message, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    plugin_name,
+                    user_id,
+                    key_scope,
+                    int(success),
+                    latency_ms,
+                    status_code,
+                    error_message[:500],
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def record_llm_usage(
+        self,
+        *,
+        user_id: int | None,
+        source: str,
+        fingerprint: str,
+        shared_config_id: int | None = None,
+        model: str,
+        base_url: str,
+        success: bool,
+        latency_ms: int | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        total_tokens: int = 0,
+        status_code: int | None = None,
+        error_message: str = "",
+        request_id: str = "",
+    ) -> int:
+        """Persist an LLM usage event without storing API keys."""
+        now = _utc_now_iso()
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO llm_usage_events
+                   (user_id, source, fingerprint, shared_config_id, model, base_url, success, latency_ms,
+                    input_tokens, output_tokens, total_tokens, status_code,
+                    error_message, request_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    source,
+                    fingerprint,
+                    shared_config_id,
+                    model,
+                    base_url,
+                    int(success),
+                    latency_ms,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    status_code,
+                    error_message[:500],
+                    request_id[:200],
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    @staticmethod
+    def _window_start_iso(since_days: int) -> str:
+        return (datetime.now(UTC) - timedelta(days=since_days)).isoformat()
+
+    @staticmethod
+    def _summarize_usage_rows(rows: list[sqlite3.Row]) -> dict[str, Any]:
+        total_calls = len(rows)
+        success_calls = sum(int(row["success"]) for row in rows)
+        latency_values = [
+            row["latency_ms"] for row in rows if row["latency_ms"] is not None
+        ]
+        return {
+            "calls": total_calls,
+            "success_calls": success_calls,
+            "failure_calls": total_calls - success_calls,
+            "success_rate": (success_calls / total_calls) if total_calls else 0.0,
+            "avg_latency_ms": int(sum(latency_values) / len(latency_values))
+            if latency_values
+            else None,
+            "last_used_at": rows[0]["created_at"] if rows else None,
+        }
+
+    def list_plugin_usage_summary(
+        self,
+        *,
+        user_id: int | None = None,
+        key_scope: str | None = None,
+        include_shared_for_user: bool = False,
+        since_days: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Return aggregated plugin API usage grouped by plugin name."""
+        cutoff = self._window_start_iso(since_days)
+        conditions = ["created_at >= ?"]
+        params: list[Any] = [cutoff]
+
+        if user_id is not None:
+            if include_shared_for_user:
+                conditions.append(
+                    "(user_id = ? OR (user_id IS NULL AND key_scope = 'shared'))"
+                )
+                params.append(user_id)
+            else:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+        if key_scope is not None:
+            conditions.append("key_scope = ?")
+            params.append(key_scope)
+
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT plugin_name,
+                           COUNT(*) AS calls,
+                           SUM(success) AS success_calls,
+                           AVG(latency_ms) AS avg_latency_ms,
+                           MAX(created_at) AS last_used_at,
+                           SUM(CASE WHEN key_scope = 'shared' THEN 1 ELSE 0 END) AS shared_calls,
+                           SUM(CASE WHEN key_scope = 'user' THEN 1 ELSE 0 END) AS personal_calls,
+                           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failure_calls
+                    FROM plugin_usage_events
+                    WHERE {where}
+                    GROUP BY plugin_name
+                    ORDER BY calls DESC, plugin_name ASC""",
+                params,
+            ).fetchall()
+        return [
+            {
+                "plugin_name": row["plugin_name"],
+                "calls": int(row["calls"] or 0),
+                "success_calls": int(row["success_calls"] or 0),
+                "failure_calls": int(row["failure_calls"] or 0),
+                "success_rate": (
+                    float(row["success_calls"] or 0) / float(row["calls"])
+                    if row["calls"]
+                    else 0.0
+                ),
+                "avg_latency_ms": int(row["avg_latency_ms"])
+                if row["avg_latency_ms"] is not None
+                else None,
+                "last_used_at": row["last_used_at"],
+                "shared_calls": int(row["shared_calls"] or 0),
+                "personal_calls": int(row["personal_calls"] or 0),
+            }
+            for row in rows
+        ]
+
+    def get_plugin_usage_overview(
+        self,
+        *,
+        user_id: int | None = None,
+        key_scope: str | None = None,
+        include_shared_for_user: bool = False,
+        since_days: int = 30,
+    ) -> dict[str, Any]:
+        """Return top-level plugin usage metrics for a given scope."""
+        cutoff = self._window_start_iso(since_days)
+        conditions = ["created_at >= ?"]
+        params: list[Any] = [cutoff]
+
+        if user_id is not None:
+            if include_shared_for_user:
+                conditions.append(
+                    "(user_id = ? OR (user_id IS NULL AND key_scope = 'shared'))"
+                )
+                params.append(user_id)
+            else:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+        if key_scope is not None:
+            conditions.append("key_scope = ?")
+            params.append(key_scope)
+
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                f"""SELECT COUNT(*) AS calls,
+                           SUM(success) AS success_calls,
+                           AVG(latency_ms) AS avg_latency_ms,
+                           MAX(created_at) AS last_used_at
+                    FROM plugin_usage_events
+                    WHERE {where}""",
+                params,
+            ).fetchone()
+
+        calls = int(row["calls"] or 0) if row else 0
+        success_calls = int(row["success_calls"] or 0) if row else 0
+        return {
+            "calls": calls,
+            "success_calls": success_calls,
+            "failure_calls": calls - success_calls,
+            "success_rate": (success_calls / calls) if calls else 0.0,
+            "avg_latency_ms": int(row["avg_latency_ms"])
+            if row and row["avg_latency_ms"] is not None
+            else None,
+            "last_used_at": row["last_used_at"] if row else None,
+        }
+
+    def list_llm_usage_summary(
+        self,
+        *,
+        user_id: int | None = None,
+        source: str | None = None,
+        include_shared_for_user: bool = False,
+        since_days: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Return aggregated LLM usage grouped by fingerprint/source/model."""
+        cutoff = self._window_start_iso(since_days)
+        conditions = ["created_at >= ?"]
+        params: list[Any] = [cutoff]
+
+        if user_id is not None:
+            if include_shared_for_user:
+                conditions.append(
+                    "(user_id = ? OR (user_id IS NULL AND source IN ('shared-user', 'shared-group')))"
+                )
+                params.append(user_id)
+            else:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT fingerprint, source, shared_config_id, model, base_url,
+                           COUNT(*) AS calls,
+                           SUM(success) AS success_calls,
+                           SUM(total_tokens) AS total_tokens,
+                           SUM(input_tokens) AS input_tokens,
+                           SUM(output_tokens) AS output_tokens,
+                           AVG(latency_ms) AS avg_latency_ms,
+                           MAX(created_at) AS last_used_at
+                    FROM llm_usage_events
+                    WHERE {where}
+                    GROUP BY fingerprint, source, shared_config_id, model, base_url
+                    ORDER BY calls DESC, last_used_at DESC""",
+                params,
+            ).fetchall()
+        return [
+            {
+                "fingerprint": row["fingerprint"],
+                "source": row["source"],
+                "shared_config_id": row["shared_config_id"],
+                "model": row["model"],
+                "base_url": row["base_url"],
+                "calls": int(row["calls"] or 0),
+                "success_calls": int(row["success_calls"] or 0),
+                "failure_calls": int((row["calls"] or 0) - (row["success_calls"] or 0)),
+                "success_rate": (
+                    float(row["success_calls"] or 0) / float(row["calls"])
+                    if row["calls"]
+                    else 0.0
+                ),
+                "total_tokens": int(row["total_tokens"] or 0),
+                "input_tokens": int(row["input_tokens"] or 0),
+                "output_tokens": int(row["output_tokens"] or 0),
+                "avg_latency_ms": int(row["avg_latency_ms"])
+                if row["avg_latency_ms"] is not None
+                else None,
+                "last_used_at": row["last_used_at"],
+            }
+            for row in rows
+        ]
+
+    def get_llm_usage_overview(
+        self,
+        *,
+        user_id: int | None = None,
+        source: str | None = None,
+        include_shared_for_user: bool = False,
+        since_days: int = 30,
+    ) -> dict[str, Any]:
+        """Return top-level LLM usage metrics for a given scope."""
+        cutoff = self._window_start_iso(since_days)
+        conditions = ["created_at >= ?"]
+        params: list[Any] = [cutoff]
+
+        if user_id is not None:
+            if include_shared_for_user:
+                conditions.append(
+                    "(user_id = ? OR (user_id IS NULL AND source IN ('shared-user', 'shared-group')))"
+                )
+                params.append(user_id)
+            else:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                f"""SELECT COUNT(*) AS calls,
+                           SUM(success) AS success_calls,
+                           SUM(total_tokens) AS total_tokens,
+                           AVG(latency_ms) AS avg_latency_ms,
+                           MAX(created_at) AS last_used_at
+                    FROM llm_usage_events
+                    WHERE {where}""",
+                params,
+            ).fetchone()
+
+        calls = int(row["calls"] or 0) if row else 0
+        success_calls = int(row["success_calls"] or 0) if row else 0
+        return {
+            "calls": calls,
+            "success_calls": success_calls,
+            "failure_calls": calls - success_calls,
+            "success_rate": (success_calls / calls) if calls else 0.0,
+            "total_tokens": int(row["total_tokens"] or 0) if row else 0,
+            "avg_latency_ms": int(row["avg_latency_ms"])
+            if row and row["avg_latency_ms"] is not None
+            else None,
+            "last_used_at": row["last_used_at"] if row else None,
+        }
+
+    def get_api_usage_snapshot(
+        self,
+        *,
+        user_id: int | None = None,
+        plugin_key_scope: str | None = None,
+        llm_source: str | None = None,
+        include_shared_for_user: bool = False,
+        since_days: int = 30,
+    ) -> dict[str, Any]:
+        """Return combined plugin + LLM usage metrics for a scope."""
+        plugin_summary = self.list_plugin_usage_summary(
+            user_id=user_id,
+            key_scope=plugin_key_scope,
+            include_shared_for_user=include_shared_for_user,
+            since_days=since_days,
+        )
+        llm_summary = self.list_llm_usage_summary(
+            user_id=user_id,
+            source=llm_source,
+            include_shared_for_user=include_shared_for_user,
+            since_days=since_days,
+        )
+        return {
+            "since_days": since_days,
+            "plugin_overview": self.get_plugin_usage_overview(
+                user_id=user_id,
+                key_scope=plugin_key_scope,
+                include_shared_for_user=include_shared_for_user,
+                since_days=since_days,
+            ),
+            "plugin_summary": plugin_summary,
+            "llm_overview": self.get_llm_usage_overview(
+                user_id=user_id,
+                source=llm_source,
+                include_shared_for_user=include_shared_for_user,
+                since_days=since_days,
+            ),
+            "llm_summary": llm_summary,
+        }
+
     # ── Admin Key Policy ────────────────────────────────────────────
 
     def is_shared_keys_allowed(self) -> bool:
@@ -593,3 +1028,8 @@ class ResultStore:
 
 # Singleton instance
 result_store = ResultStore()
+
+
+def get_result_store() -> ResultStore:
+    """Return the current result-store singleton."""
+    return result_store

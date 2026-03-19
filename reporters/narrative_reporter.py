@@ -87,6 +87,10 @@ class NarrativeReporter:
                 api_key=overrides.get("api_key") or None,
                 model=overrides.get("model") or None,
                 base_url=overrides.get("base_url") or None,
+                user_id=overrides.get("user_id"),
+                source=overrides.get("source", "template"),
+                fingerprint=overrides.get("fingerprint", ""),
+                shared_config_id=overrides.get("shared_config_id"),
             )
             if response:
                 llm_sections = self._parse_llm_response(response)
@@ -189,6 +193,8 @@ class NarrativeReporter:
         # RDAP / ownership
         rdap = _get_all("rdap")
         rdns = _get_all("reverse_dns")
+        abuseipdb = _get_all("abuseipdb")
+        threatbook = _get_all("threatbook")
 
         # Build domain correlation from multiple sources
         rdns_hostname = _get("reverse_dns", "hostname")
@@ -196,16 +202,40 @@ class NarrativeReporter:
         vt_data = _get_all("virustotal")
         vt_domains = (vt_data or {}).get("related_domains", [])
 
+        organization = self._first_non_empty(
+            _get("rdap", "name"),
+            (abuseipdb or {}).get("isp"),
+            (threatbook or {}).get("carrier"),
+            (vt_data or {}).get("as_owner"),
+        )
+        country = self._first_non_empty(
+            _get("rdap", "country"),
+            (threatbook or {}).get("country"),
+            (abuseipdb or {}).get("country_code"),
+        )
+        network = _get("rdap", "network")
+        ownership_available = any(
+            [
+                _get("rdap", "asn"),
+                organization,
+                country,
+                network,
+                rdns_hostname,
+                bool(rdns_aliases),
+            ]
+        )
+
         return {
             "ip": verdict.object_value,
             # Ownership
             "asn": _get("rdap", "asn"),
-            "organization": _get("rdap", "name"),
-            "country": _get("rdap", "country"),
-            "network": _get("rdap", "network"),
+            "organization": organization,
+            "country": country,
+            "network": network,
             "handle": _get("rdap", "handle"),
             "rdap_type": _get("rdap", "type"),
             "rdap_entities": self._format_rdap_entities(_get("rdap", "entities", [])),
+            "ownership_available": ownership_available,
             # Reverse DNS
             "rdns_hostname": rdns_hostname,
             "rdns_aliases": rdns_aliases,
@@ -213,7 +243,7 @@ class NarrativeReporter:
             "rdns_domains": self._collect_rdns_domains(rdns_hostname, rdns_aliases),
             "vt_resolutions": vt_domains,
             # AbuseIPDB
-            "abuseipdb": _get_all("abuseipdb"),
+            "abuseipdb": abuseipdb,
             # VirusTotal
             "virustotal": vt_data,
             # OTX
@@ -222,6 +252,8 @@ class NarrativeReporter:
             "greynoise": _get_all("greynoise"),
             # Shodan
             "shodan": _get_all("shodan"),
+            # ThreatBook
+            "threatbook": threatbook,
             # Internal
             "honeynet": _get_all("honeynet"),
             "internal_flow": _get_all("internal_flow"),
@@ -234,6 +266,19 @@ class NarrativeReporter:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _first_non_empty(*values: Any) -> Any:
+        """Return the first non-empty scalar value."""
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, dict)) and not value:
+                continue
+            return value
+        return None
 
     @staticmethod
     def _format_rdap_entities(entities: Any) -> List[str]:

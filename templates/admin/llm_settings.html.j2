@@ -102,6 +102,11 @@
                 <p class="text-muted mb-2">{{ t('admin.llm_info') }}</p>
                 <hr>
                 <p class="text-muted mb-0"><small>{{ t('admin.llm_validate_hint') }}</small></p>
+                {% if llm_usage_snapshot %}
+                <hr>
+                <p class="mb-1"><strong>{{ t('admin.llm_calls_30d') }}:</strong> {{ llm_usage_snapshot.llm_overview.calls }}</p>
+                <p class="mb-0"><small class="text-muted">{{ t('admin.total_tokens') }}: {{ llm_usage_snapshot.llm_overview.total_tokens }}</small></p>
+                {% endif %}
             </div>
         </div>
         {% if user.is_admin %}
@@ -155,6 +160,10 @@
                             <div>
                                 <strong>{{ item.name }}</strong><br>
                                 <small class="text-muted">{{ item.model }} · {{ item.base_url }}</small>
+                                {% set usage = shared_usage_by_config.get(item.id) %}
+                                {% if usage %}
+                                <br><small class="text-muted">{{ usage.calls }} {{ t('admin.calls') }} · {{ t('admin.total_tokens') }} {{ usage.total_tokens }}</small>
+                                {% endif %}
                             </div>
                             <form method="post" action="{{ root_path }}/admin/settings/llm/shared/{{ item.id }}/delete"
                                   onsubmit="return confirm('{{ t('admin.confirm_delete') }}');">

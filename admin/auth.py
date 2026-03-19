@@ -50,6 +50,13 @@ def login_redirect(request: Request) -> RedirectResponse:
 
     # Capture the original URL so we can redirect back after login
     original_url = str(request.url.path)
+    root_path = settings.root_path.rstrip("/")
+    if (
+        root_path
+        and original_url.startswith("/")
+        and not original_url.startswith(root_path)
+    ):
+        original_url = f"{root_path}{original_url}"
     query = str(request.url.query)
     if query:
         original_url = f"{original_url}?{query}"

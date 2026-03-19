@@ -518,9 +518,9 @@ class AdminDB:
             if any(plugin_name in perm and perm[plugin_name] for perm in permissions):
                 return True
 
-        from storage.result_store import result_store
+        from storage.result_store import get_result_store
 
-        return result_store.is_shared_keys_allowed()
+        return get_result_store().is_shared_keys_allowed()
 
     # ── Personal & Shared LLM Settings ──────────────────────────
 
@@ -600,10 +600,10 @@ class AdminDB:
             str(assigned.get("shared_config_name", "")) if assigned else None
         )
 
-        from storage.result_store import result_store
+        from storage.result_store import get_result_store
         from app.config import settings
 
-        configured_only = result_store.is_configured_only()
+        configured_only = get_result_store().is_configured_only()
         env_api_key = (settings.llm_api_key or "").strip()
         env_model = settings.llm_model or "gpt-4o"
         env_base_url = _normalize_base_url(settings.llm_base_url or "")

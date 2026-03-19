@@ -4,6 +4,9 @@ FastAPI interface for Threat Intelligence Reasoning Engine.
 
 import logging
 import os
+import json
+from contextlib import asynccontextmanager
+from datetime import datetime
 from app.config import settings
 
 # Configure logging BEFORE anything else imports loggers
@@ -21,21 +24,40 @@ from starlette.middleware.sessions import SessionMiddleware
 from typing import Any, Optional
 from app.service import ThreatIntelService
 from app.i18n import i18n
-from models import ContextProfile
+from models import ContextProfile, Verdict
 from reporters.json_reporter import JSONReporter
 from reporters.html_reporter import HTMLReporter
 from reporters.narrative_reporter import NarrativeReporter
 from admin.routes import router as admin_router
 from admin.database import admin_db
 from admin.auth import get_current_user, login_redirect
+from app import api_helpers
+from storage.result_store import get_result_store
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize app-scoped services on startup."""
+    admin_db.ensure_admin_exists()
+
+    from admin.log_handler import MemoryLogHandler, LogStore
+
+    store = LogStore()
+    store.bind_loop()
+    handler = MemoryLogHandler(store)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger().addHandler(handler)
+    yield
+
 
 app = FastAPI(
     title="Threat Intelligence Reasoning Engine",
     description="Multi-source threat intelligence analysis and reasoning engine",
     version="2.0.0",
     root_path=settings.root_path,
+    lifespan=lifespan,
 )
 
 # Session middleware for admin portal cookie-based auth
@@ -54,19 +76,82 @@ templates = Jinja2Templates(
 )
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize admin database, ensure default admin user, wire log handler."""
-    admin_db.ensure_admin_exists()
+def _get_latest_visible_snapshot(ip: str, user_id: int) -> dict[str, Any] | None:
+    """Return the latest visible snapshot across personal and shared scopes."""
+    return api_helpers.get_latest_visible_snapshot(ip, user_id)
 
-    # Attach in-memory log handler for the admin log viewer
-    from admin.log_handler import MemoryLogHandler, LogStore
 
-    store = LogStore()
-    store.bind_loop()
-    handler = MemoryLogHandler(store)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logging.getLogger().addHandler(handler)
+def _load_latest_report_verdict(
+    ip: str, user_id: int
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Prefer the latest visible persisted snapshot verdict for report generation.
+
+    Falls back to the in-memory/TTL cached verdict when no visible snapshot exists.
+    Returns a tuple of (verdict, latest_snapshot).
+    """
+    return api_helpers.load_latest_report_verdict(
+        ip=ip,
+        user_id=user_id,
+        cached_verdict_loader=service.query_engine.cache.get_verdict,
+    )
+
+
+def _recent_dashboard_context(user_id: int) -> dict[str, Any]:
+    """Return recent dashboard history data for a user."""
+    return api_helpers.recent_dashboard_context(user_id)
+
+
+def _resolve_cached_report(
+    *,
+    ip: str,
+    user_id: int,
+    llm_fingerprint: str,
+    lang: str,
+    snapshot_id: int | None,
+) -> dict[str, Any] | None:
+    """Resolve the latest cached report matching the current rendering context."""
+    return api_helpers.resolve_cached_report(
+        ip=ip,
+        user_id=user_id,
+        llm_fingerprint=llm_fingerprint,
+        lang=lang,
+        snapshot_id=snapshot_id,
+    )
+
+
+def _archive_reports_for_user(ip: str, user_id: int) -> int:
+    """Archive previous reports for a user when regenerating."""
+    return api_helpers.archive_reports_for_user(ip, user_id)
+
+
+def _parse_snapshot_query_date(
+    latest_snapshot: dict[str, Any] | None,
+) -> datetime | None:
+    """Parse the snapshot queried_at timestamp when present."""
+    return api_helpers.parse_snapshot_query_date(latest_snapshot)
+
+
+async def _render_and_persist_report(
+    *,
+    ip: str,
+    user_id: int,
+    report_verdict: Verdict,
+    lang: str,
+    llm_settings: dict[str, Any],
+    snapshot_id: int | None,
+    query_date: datetime | None,
+) -> tuple[str, bool, bool]:
+    """Render a narrative report and persist it."""
+    return await api_helpers.render_and_persist_report(
+        ip=ip,
+        user_id=user_id,
+        report_verdict=report_verdict,
+        lang=lang,
+        snapshot_id=snapshot_id,
+        llm_settings=llm_settings,
+        query_date=query_date,
+        report_renderer=narrative_reporter.generate,
+    )
 
 
 class AnalyzeRequest(BaseModel):
@@ -79,31 +164,29 @@ class AnalyzeRequest(BaseModel):
 
 def _get_lang(request: Request) -> str:
     """Resolve display language: ?lang= query param → cookie → config default."""
-    lang = request.query_params.get("lang")
-    if lang in i18n.SUPPORTED_LANGS:
-        return lang
-    cookie_lang = request.cookies.get("preferred_locale")
-    if cookie_lang in i18n.SUPPORTED_LANGS:
-        return cookie_lang
-    return settings.language
+    return api_helpers.get_lang(request)
 
 
 def _can_view_snapshot(user: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
-    if snapshot.get("api_key_type") == "shared":
-        return True
-    if not user:
-        return False
-    if user.get("is_admin"):
-        return True
-    return snapshot.get("user_id") == user.get("id")
+    return api_helpers.can_view_snapshot(user, snapshot)
 
 
 def _can_view_report(user: dict[str, Any] | None, report: dict[str, Any]) -> bool:
-    if not user:
-        return False
-    if user.get("is_admin"):
-        return True
-    return report.get("user_id") == user.get("id")
+    return api_helpers.can_view_report(user, report)
+
+
+def _load_and_authorize_snapshot(
+    snapshot_id: int, user: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Load a snapshot and enforce view permissions."""
+    return api_helpers.load_and_authorize_snapshot(snapshot_id, user)
+
+
+def _build_timeline_from_snapshots(
+    snapshots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build oldest-first timeline payload from visible snapshots."""
+    return api_helpers.build_timeline_from_snapshots(snapshots)
 
 
 @app.get("/healthz")
@@ -318,7 +401,6 @@ async def analyze_web(
     try:
         verdict = await service.analyze_ip(ip, refresh=refresh, user_id=user["id"])
         html_report = html_reporter.generate(verdict, lang=lang)
-        report_fallback_notice = request.query_params.get("report_fallback", "")
         response = templates.TemplateResponse(
             "dashboard.html.j2",
             {
@@ -326,7 +408,6 @@ async def analyze_web(
                 "verdict": verdict,
                 "html_report": html_report,
                 "ip": ip,
-                "report_fallback_notice": report_fallback_notice,
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
@@ -346,7 +427,6 @@ async def analyze_web(
                 "request": request,
                 "error": str(e),
                 "ip": ip,
-                "report_fallback_notice": "",
                 "t": t,
                 "lang": lang,
                 "root_path": settings.root_path,
@@ -387,9 +467,9 @@ async def generate_report(
     lang = _get_lang(request)
 
     try:
-        # Step 1: Try to get existing verdict from cache ONLY — never query.
-        cached_verdict = service.query_engine.cache.get_verdict(ip)
-        if cached_verdict is None:
+        # Step 1: Load the latest visible persisted snapshot verdict when available.
+        report_verdict, latest_snapshot = _load_latest_report_verdict(ip, user["id"])
+        if report_verdict is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
@@ -403,14 +483,6 @@ async def generate_report(
             from storage.result_store import result_store
 
             llm_settings = admin_db.resolve_effective_llm_access(user["id"])
-
-            latest_snapshot = result_store.get_latest_snapshot(
-                ip=ip,
-                user_id=user["id"],
-                api_key_type="personal",
-            )
-            if latest_snapshot is None:
-                latest_snapshot = result_store.get_latest_snapshot(ip=ip)
             snapshot_id = latest_snapshot.get("id") if latest_snapshot else None
 
             cached_report = result_store.get_latest_report(
@@ -446,17 +518,9 @@ async def generate_report(
         llm_settings = admin_db.resolve_effective_llm_access(user["id"])
 
         # Resolve query_date from the latest snapshot for staleness detection
-        from storage.result_store import result_store as _store
         from datetime import datetime
 
         query_date = None
-        latest_snapshot = _store.get_latest_snapshot(
-            ip=ip,
-            user_id=user["id"],
-            api_key_type="personal",
-        )
-        if latest_snapshot is None:
-            latest_snapshot = _store.get_latest_snapshot(ip=ip)
         if latest_snapshot and latest_snapshot.get("queried_at"):
             try:
                 query_date = datetime.fromisoformat(latest_snapshot["queried_at"])
@@ -464,7 +528,7 @@ async def generate_report(
                 pass
 
         html, llm_used, llm_fallback = await narrative_reporter.generate(
-            cached_verdict,
+            report_verdict,
             lang=lang,
             llm_overrides=llm_settings,
             query_date=query_date,
@@ -549,27 +613,14 @@ async def compare_snapshots(
         - Timeline mode (no params): list of {queried_at, final_score, level}
         - Diff mode (a & b): detailed field-by-field comparison
     """
-    from storage.result_store import result_store
     import json as _json
 
     try:
         user = get_current_user(request)
         if snapshot_a is not None and snapshot_b is not None:
             # Side-by-side diff mode
-            snap_a = result_store.get_snapshot_by_id(snapshot_a)
-            snap_b = result_store.get_snapshot_by_id(snapshot_b)
-            if not snap_a:
-                raise HTTPException(
-                    status_code=404, detail=f"Snapshot {snapshot_a} not found"
-                )
-            if not snap_b:
-                raise HTTPException(
-                    status_code=404, detail=f"Snapshot {snapshot_b} not found"
-                )
-            if not _can_view_snapshot(user, snap_a) or not _can_view_snapshot(
-                user, snap_b
-            ):
-                raise HTTPException(status_code=403, detail="Access denied")
+            snap_a = _load_and_authorize_snapshot(snapshot_a, user)
+            snap_b = _load_and_authorize_snapshot(snapshot_b, user)
 
             # Compute diff
             diff = _compute_snapshot_diff(snap_a, snap_b)
@@ -594,22 +645,13 @@ async def compare_snapshots(
             )
         else:
             # Timeline mode — return score history
-            snapshots = result_store.get_visible_snapshot_history(
+            snapshots = get_result_store().get_visible_snapshot_history(
                 ip=ip,
                 user_id=user["id"] if user else None,
                 is_admin=bool(user and user.get("is_admin")),
                 limit=50,
             )
-            timeline = [
-                {
-                    "id": s["id"],
-                    "queried_at": s["queried_at"],
-                    "final_score": s["final_score"],
-                    "level": s["level"],
-                    "is_archived": s.get("is_archived", 0),
-                }
-                for s in reversed(snapshots)  # oldest first for timeline
-            ]
+            timeline = _build_timeline_from_snapshots(snapshots)
             return JSONResponse(
                 content={
                     "mode": "timeline",
@@ -743,9 +785,7 @@ async def view_report_page(report_id: int, request: Request):
     if not user:
         return login_redirect(request)
 
-    from storage.result_store import result_store
-
-    report = result_store.get_report_by_id(report_id)
+    report = get_result_store().get_report_by_id(report_id)
     if not report:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
     if not _can_view_report(user, report):
@@ -764,15 +804,13 @@ async def compare_reports_page(
     if not user:
         return login_redirect(request)
 
-    from storage.result_store import result_store
-
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
     reports: list[dict[str, Any]] = []
     for report_id in [report_a, report_b]:
         if report_id is None:
             continue
-        report = result_store.get_report_by_id(report_id)
+        report = get_result_store().get_report_by_id(report_id)
         if not report:
             raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
         if not _can_view_report(user, report):
@@ -788,7 +826,7 @@ async def compare_reports_page(
             )
 
     report_history = (
-        result_store.get_report_history(reports[0]["ip"], user["id"], limit=20)
+        get_result_store().get_report_history(reports[0]["ip"], user["id"], limit=20)
         if reports
         else []
     )
@@ -818,9 +856,7 @@ async def get_report_detail(report_id: int, request: Request):
             status_code=401, content={"detail": "Authentication required"}
         )
 
-    from storage.result_store import result_store
-
-    report = result_store.get_report_by_id(report_id)
+    report = get_result_store().get_report_by_id(report_id)
     if not report:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
 
@@ -838,9 +874,7 @@ async def get_my_snapshot_history(request: Request, limit: int = 20):
             status_code=401, content={"detail": "Authentication required"}
         )
 
-    from storage.result_store import result_store
-
-    snapshots = result_store.get_user_snapshot_history(user["id"], limit=limit)
+    snapshots = get_result_store().get_user_snapshot_history(user["id"], limit=limit)
     return JSONResponse(content={"snapshots": snapshots, "count": len(snapshots)})
 
 
@@ -852,9 +886,7 @@ async def get_my_report_history(request: Request, limit: int = 20):
             status_code=401, content={"detail": "Authentication required"}
         )
 
-    from storage.result_store import result_store
-
-    reports = result_store.get_user_report_history(user["id"], limit=limit)
+    reports = get_result_store().get_user_report_history(user["id"], limit=limit)
     return JSONResponse(content={"reports": reports, "count": len(reports)})
 
 

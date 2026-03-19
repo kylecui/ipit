@@ -237,6 +237,9 @@
             {% if source_data.rdns_aliases %}
             <tr><td>{{ t('narrative.aliases') }}</td><td>{{ source_data.rdns_aliases | join(', ') }}</td></tr>
             {% endif %}
+            {% if not source_data.ownership_available %}
+            <tr><td colspan="2" class="text-muted">{{ t('narrative.no_data') }}</td></tr>
+            {% endif %}
         </table>
         {% if source_data.rdap_entities %}
         <p class="text-muted" style="font-size:0.85rem;">RDAP Entities: {{ source_data.rdap_entities | join(', ') }}</p>

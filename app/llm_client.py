@@ -14,11 +14,13 @@ so each user's admin-portal settings take effect at request time.
 import logging
 import asyncio
 import random
+import time
 from typing import Any, Dict, Optional
 
 import httpx
 
 from app.config import settings
+from storage.result_store import get_result_store
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,10 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
+        user_id: Optional[int] = None,
+        source: str = "template",
+        fingerprint: str = "",
+        shared_config_id: int | None = None,
     ) -> Optional[str]:
         """
         Generate text using LLM API.
@@ -81,6 +87,7 @@ class LLMClient:
         last_reason = "unknown"
 
         for attempt in range(1, max_attempts + 1):
+            started_at = time.perf_counter()
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(
@@ -102,10 +109,30 @@ class LLMClient:
                     response.raise_for_status()
                     data = response.json()
                     content = data["choices"][0]["message"]["content"]
+                    usage = data.get("usage", {})
+                    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                    total_tokens = int(usage.get("total_tokens", 0) or 0)
+                    latency_ms = int((time.perf_counter() - started_at) * 1000)
+                    get_result_store().record_llm_usage(
+                        user_id=user_id,
+                        source=source,
+                        fingerprint=fingerprint,
+                        shared_config_id=shared_config_id,
+                        model=effective_model,
+                        base_url=effective_base,
+                        success=True,
+                        latency_ms=latency_ms,
+                        input_tokens=prompt_tokens,
+                        output_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        status_code=response.status_code,
+                        request_id=response.headers.get("x-request-id", ""),
+                    )
                     logger.info(
                         "LLM generation completed (attempt=%d, tokens=%d, model=%s, base=%s, request_id=%s)",
                         attempt,
-                        data.get("usage", {}).get("total_tokens", 0),
+                        total_tokens,
                         effective_model,
                         effective_base,
                         response.headers.get("x-request-id", ""),
@@ -114,6 +141,17 @@ class LLMClient:
 
             except httpx.TimeoutException:
                 last_reason = "timeout"
+                get_result_store().record_llm_usage(
+                    user_id=user_id,
+                    source=source,
+                    fingerprint=fingerprint,
+                    shared_config_id=shared_config_id,
+                    model=effective_model,
+                    base_url=effective_base,
+                    success=False,
+                    latency_ms=int((time.perf_counter() - started_at) * 1000),
+                    error_message="timeout",
+                )
                 logger.warning(
                     "LLM request timed out (attempt=%d/%d, model=%s, base=%s)",
                     attempt,
@@ -124,6 +162,19 @@ class LLMClient:
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
                 last_reason = f"http_{status_code}"
+                get_result_store().record_llm_usage(
+                    user_id=user_id,
+                    source=source,
+                    fingerprint=fingerprint,
+                    shared_config_id=shared_config_id,
+                    model=effective_model,
+                    base_url=effective_base,
+                    success=False,
+                    latency_ms=int((time.perf_counter() - started_at) * 1000),
+                    status_code=status_code,
+                    error_message=e.response.text[:200],
+                    request_id=e.response.headers.get("x-request-id", ""),
+                )
                 logger.warning(
                     "LLM API error (attempt=%d/%d, status=%s, model=%s, base=%s, request_id=%s): %s",
                     attempt,
@@ -138,6 +189,17 @@ class LLMClient:
                     break
             except Exception as e:
                 last_reason = type(e).__name__
+                get_result_store().record_llm_usage(
+                    user_id=user_id,
+                    source=source,
+                    fingerprint=fingerprint,
+                    shared_config_id=shared_config_id,
+                    model=effective_model,
+                    base_url=effective_base,
+                    success=False,
+                    latency_ms=int((time.perf_counter() - started_at) * 1000),
+                    error_message=str(e),
+                )
                 logger.warning(
                     "LLM generation failed (attempt=%d/%d, model=%s, base=%s): %s",
                     attempt,

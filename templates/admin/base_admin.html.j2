@@ -91,6 +91,11 @@
             </li>
             {% if user.is_admin %}
             <li class="nav-item">
+                <a class="nav-link {% block nav_usage %}{% endblock %}" href="{{ root_path }}/admin/usage">
+                    📈 {{ t('admin.api_usage') }}
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link {% block nav_api_keys %}{% endblock %}" href="{{ root_path }}/admin/settings/api-keys">
                     🔑 {{ t('admin.shared_api_keys') }}
                 </a>

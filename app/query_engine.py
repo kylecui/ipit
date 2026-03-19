@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -26,7 +27,7 @@ from analyzers.contextual_risk_engine import ContextualRiskEngine
 from analyzers.noise_engine import NoiseEngine
 from plugins import PluginRegistry, PluginResult, TIPlugin, SandboxedPluginRunner
 from cache.cache_store import CacheStore
-from storage.result_store import result_store
+from storage.result_store import get_result_store
 from admin.database import admin_db
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class QueryEngine:
             # Archive existing snapshots before refresh so history is preserved
             if refresh:
                 try:
-                    archived = result_store.archive_snapshots(observable.value)
+                    archived = get_result_store().archive_snapshots(observable.value)
                     if archived:
                         logger.info(
                             "Archived %d previous snapshot(s) for %s",
@@ -206,13 +207,24 @@ class QueryEngine:
                 if any(source == "user" for source in key_sources.values())
                 else "shared"
             )
-        elif result_store.is_configured_only():
+        elif get_result_store().is_configured_only():
             for plugin in plugins:
                 plugin.set_api_key_override(None)
 
         # Run all plugins concurrently with fault-tolerance
         results = await asyncio.gather(
-            *[self._safe_query(plugin, ip, "ip") for plugin in plugins]
+            *[
+                self._safe_query(
+                    plugin,
+                    ip,
+                    "ip",
+                    user_id=user_id,
+                    key_scope=key_sources.get(plugin.metadata.name, "none")
+                    if user_id is not None
+                    else "system",
+                )
+                for plugin in plugins
+            ]
         )
 
         # Clear API key overrides after queries complete (security hygiene)
@@ -270,16 +282,16 @@ class QueryEngine:
                 continue
 
             if meta.name == "greynoise":
-                resolved_key = result_store.get_plugin_api_key(user_id, meta.name)
+                resolved_key = get_result_store().get_plugin_api_key(user_id, meta.name)
                 source = "user" if resolved_key else "none"
                 if not resolved_key and admin_db.can_user_use_shared_plugin(
                     user_id, meta.name
                 ):
-                    resolved_key = result_store.get_plugin_api_key(0, meta.name)
+                    resolved_key = get_result_store().get_plugin_api_key(0, meta.name)
                     if resolved_key:
                         source = "shared"
             else:
-                resolved_key, source = result_store.resolve_plugin_api_key(
+                resolved_key, source = get_result_store().resolve_plugin_api_key(
                     user_id=user_id,
                     plugin_name=meta.name,
                     env_var=meta.api_key_env_var,
@@ -301,7 +313,13 @@ class QueryEngine:
         return key_sources
 
     async def _safe_query(
-        self, plugin: TIPlugin, observable: str, obs_type: str
+        self,
+        plugin: TIPlugin,
+        observable: str,
+        obs_type: str,
+        *,
+        user_id: int | None = None,
+        key_scope: str = "none",
     ) -> PluginResult:
         """Run a single plugin query with fault-tolerance.
 
@@ -309,6 +327,15 @@ class QueryEngine:
         Trusted plugins (builtin/ by default) run in-process for zero overhead.
         """
         plugin_name = plugin.metadata.name
+        started_at = time.perf_counter()
+
+        def _status_code_from_error(error: str | None) -> int | None:
+            if not error:
+                return None
+            for token in str(error).replace(":", " ").split():
+                if token.isdigit() and len(token) == 3:
+                    return int(token)
+            return None
 
         try:
             if self.registry.is_sandboxed(plugin_name):
@@ -318,20 +345,40 @@ class QueryEngine:
                     plugin_name,
                     sandbox_config.get("timeout", 30),
                 )
-                return await self._sandbox_runner.run(
+                result = await self._sandbox_runner.run(
                     plugin, observable, obs_type, sandbox_config
                 )
             else:
-                return await plugin.query(observable, obs_type)
+                result = await plugin.query(observable, obs_type)
+
+            get_result_store().record_plugin_usage(
+                plugin_name=plugin_name,
+                user_id=user_id,
+                key_scope=key_scope,
+                success=result.ok,
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
+                status_code=_status_code_from_error(result.error),
+                error_message=result.error or "",
+            )
+            return result
         except Exception as e:
             logger.error(f"Plugin '{plugin_name}' crashed: {e}", exc_info=True)
+            error_message = f"Plugin crashed: {e}"
+            get_result_store().record_plugin_usage(
+                plugin_name=plugin_name,
+                user_id=user_id,
+                key_scope=key_scope,
+                success=False,
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
+                error_message=error_message,
+            )
             return PluginResult(
                 source=plugin_name,
                 ok=False,
                 raw_data=None,
                 normalized_data=None,
                 evidence=[],
-                error=f"Plugin crashed: {e}",
+                error=error_message,
             )
 
     @staticmethod
@@ -432,7 +479,7 @@ class QueryEngine:
             sources_json = json.dumps(profile.sources) if profile.sources else None
             # Determine API key type for per-key sharing logic
             api_key_type = sharing_scope
-            result_store.save_snapshot(
+            get_result_store().save_snapshot(
                 ip=profile.ip,
                 verdict_json=verdict_json,
                 sources_json=sources_json,

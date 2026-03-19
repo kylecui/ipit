@@ -38,6 +38,7 @@
                         <th>{{ t('admin.key_status') }}</th>
                         <th class="text-center" style="min-width: 120px;">{{ t('admin.status') }}</th>
                         <th>{{ t('admin.shared_access') }}</th>
+                        <th>{{ t('admin.usage_30d') }}</th>
                         <th style="min-width: 320px;">{{ t('admin.api_key') }}</th>
                         <th>{{ t('admin.actions') }}</th>
                     </tr>
@@ -81,6 +82,17 @@
                             {% endif %}
                         </td>
                         <td>
+                            {% set usage = plugin_usage_by_name.get(plugin.plugin_name) %}
+                            {% if usage %}
+                            <small>
+                                {{ usage.calls }} {{ t('admin.calls') }}<br>
+                                {{ t('admin.success_rate_label') }}: {{ '%.0f'|format((usage.success_rate or 0) * 100) }}%
+                            </small>
+                            {% else %}
+                            <small class="text-muted">{{ t('admin.no_usage_yet') }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
                             <form method="post" action="{{ root_path }}/admin/settings/my-api-keys" class="d-flex gap-2">
                                 <input type="hidden" name="plugin_name" value="{{ plugin.plugin_name }}">
                                 <div class="input-group input-group-sm">
@@ -119,6 +131,20 @@
         </div>
     </div>
 </div>
+
+{% if usage_snapshot %}
+<div class="card mt-4">
+    <div class="card-header">
+        <h6 class="mb-0">{{ t('admin.api_usage') }} · 30d</h6>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-6"><strong>{{ t('admin.calls') }}:</strong> {{ usage_snapshot.plugin_overview.calls }}</div>
+            <div class="col-md-6"><strong>{{ t('admin.success_rate_label') }}:</strong> {{ '%.0f'|format((usage_snapshot.plugin_overview.success_rate or 0) * 100) }}%</div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

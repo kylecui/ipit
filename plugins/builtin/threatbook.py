@@ -30,6 +30,23 @@ class ThreatBookPlugin(TIPlugin):
     """
 
     API_BASE = "https://api.threatbook.cn/v3"
+    SEVERITY_MAP = {
+        "critical": "critical",
+        "严重": "critical",
+        "high": "high",
+        "高": "high",
+        "medium": "medium",
+        "中": "medium",
+        "moderate": "medium",
+        "low": "low",
+        "低": "low",
+        "info": "info",
+        "information": "info",
+        "信息": "info",
+        "safe": "info",
+        "unknown": "info",
+        "未知": "info",
+    }
 
     @property
     def metadata(self) -> PluginMetadata:
@@ -103,7 +120,7 @@ class ThreatBookPlugin(TIPlugin):
 
     def _normalize(self, ip_data: dict[str, Any], observable: str) -> dict[str, Any]:
         """Normalize ThreatBook API response into a standard format."""
-        severity = ip_data.get("severity", "info")
+        severity = self._normalize_severity(ip_data.get("severity", "info"))
         judgments = ip_data.get("judgments", [])
 
         # Extract tags
@@ -141,6 +158,12 @@ class ThreatBookPlugin(TIPlugin):
             "is_malicious": any(j in ("malicious", "Malicious") for j in judgments),
             "is_suspicious": any(j in ("suspicious", "Suspicious") for j in judgments),
         }
+
+    def _normalize_severity(self, severity: Any) -> str:
+        """Normalize ThreatBook severity labels across language variants."""
+        if not isinstance(severity, str):
+            return "info"
+        return self.SEVERITY_MAP.get(severity.strip().lower(), "info")
 
     def _score(self, data: dict[str, Any]) -> list[EvidenceItem]:
         """Apply scoring rules based on ThreatBook severity and judgments.

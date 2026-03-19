@@ -20,7 +20,7 @@ from admin.database import admin_db
 from admin.log_handler import LogStore
 from app.config import settings
 from app.i18n import i18n
-from storage.result_store import result_store
+from storage.result_store import get_result_store
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def _get_all_plugins_info() -> list[dict[str, Any]]:
         logger.warning(f"Could not load plugin metadata: {e}")
 
     shared_key_names = {
-        row["plugin_name"] for row in result_store.list_plugin_api_keys(user_id=0)
+        row["plugin_name"] for row in get_result_store().list_plugin_api_keys(user_id=0)
     }
     result = []
     for name, cfg in plugin_configs.items():
@@ -236,6 +236,20 @@ def _parse_int_list(values: list[str] | None) -> list[int]:
     return result
 
 
+def _normalize_next_url(next_url: str | None) -> str:
+    """Normalize post-login redirects so mounted root paths are preserved."""
+    next_url = (next_url or "").strip()
+    if not next_url:
+        return f"{settings.root_path}/admin/"
+    if next_url.startswith(("http://", "https://", "//")):
+        return f"{settings.root_path}/admin/"
+
+    root_path = settings.root_path.rstrip("/")
+    if root_path and next_url.startswith("/") and not next_url.startswith(root_path):
+        return f"{root_path}{next_url}"
+    return next_url
+
+
 # ── Auth routes ─────────────────────────────────────────────────
 
 
@@ -245,7 +259,7 @@ async def login_page(request: Request):
     next_url = request.query_params.get("next", "")
     if user:
         # Already logged in — honour the next param or go to admin dashboard
-        redirect_to = next_url or f"{settings.root_path}/admin/"
+        redirect_to = _normalize_next_url(next_url)
         return RedirectResponse(redirect_to, status_code=303)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
@@ -285,7 +299,7 @@ async def login_submit(
         )
     request.session["user_id"] = user["id"]
     admin_db.log_action(user["id"], "login", f"User {username} logged in")
-    redirect_to = next_url or f"{settings.root_path}/admin/"
+    redirect_to = _normalize_next_url(next_url)
     return RedirectResponse(redirect_to, status_code=303)
 
 
@@ -311,6 +325,7 @@ async def admin_dashboard(request: Request):
     llm = admin_db.get_llm_settings(user["id"])
     llm_configured = bool(llm.get("api_key"))
     recent_logs = admin_db.get_recent_logs(10) if user.get("is_admin") else []
+    usage_snapshot = get_result_store().get_api_usage_snapshot(since_days=30)
     return templates.TemplateResponse(
         "admin/dashboard.html.j2",
         _admin_context(
@@ -320,6 +335,7 @@ async def admin_dashboard(request: Request):
             enabled_count=enabled_count,
             llm_configured=llm_configured,
             recent_logs=recent_logs,
+            usage_snapshot=usage_snapshot,
         ),
     )
 
@@ -545,6 +561,17 @@ async def llm_settings_page(request: Request):
     shared_llm_configs = (
         admin_db.list_shared_llm_configs() if user.get("is_admin") else []
     )
+    llm_usage_snapshot = get_result_store().get_api_usage_snapshot(
+        user_id=None if user.get("is_admin") else user["id"],
+        llm_source=None if user.get("is_admin") else llm.get("source"),
+        include_shared_for_user=not user.get("is_admin"),
+        since_days=30,
+    )
+    shared_usage_by_config = {
+        int(item["shared_config_id"]): item
+        for item in llm_usage_snapshot["llm_summary"]
+        if item.get("shared_config_id") is not None
+    }
     assignment = admin_db.get_user_llm_assignment(user["id"])
     msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
@@ -554,6 +581,8 @@ async def llm_settings_page(request: Request):
             user,
             llm=llm,
             shared_llm_configs=shared_llm_configs,
+            llm_usage_snapshot=llm_usage_snapshot,
+            shared_usage_by_config=shared_usage_by_config,
             selected_shared_llm_id=(assignment or {}).get("llm_config_id"),
             can_use_personal_llm=can_use_personal_llm,
             msg=msg,
@@ -704,9 +733,14 @@ async def profile_page(request: Request):
     if not user:
         return login_redirect(request)
     msg = request.query_params.get("msg", "")
+    usage_snapshot = get_result_store().get_api_usage_snapshot(
+        user_id=user["id"],
+        include_shared_for_user=True,
+        since_days=30,
+    )
     return templates.TemplateResponse(
         "admin/profile.html.j2",
-        _admin_context(request, user, msg=msg),
+        _admin_context(request, user, msg=msg, usage_snapshot=usage_snapshot),
     )
 
 
@@ -1178,7 +1212,7 @@ PLUGIN_API_KEY_REGISTRY: list[dict[str, Any]] = [
 def _get_plugin_key_registry() -> list[dict[str, Any]]:
     """Return the plugin API key registry with current configuration status."""
     shared_keys = {
-        row["plugin_name"] for row in result_store.list_plugin_api_keys(user_id=0)
+        row["plugin_name"] for row in get_result_store().list_plugin_api_keys(user_id=0)
     }
     registry = []
     for entry in PLUGIN_API_KEY_REGISTRY:
@@ -1200,10 +1234,18 @@ async def api_keys_admin_page(request: Request):
     if not user.get("is_admin"):
         return RedirectResponse(f"{settings.root_path}/admin/", status_code=303)
 
-    shared_keys = result_store.list_plugin_api_keys(user_id=0)
-    shared_keys_allowed = result_store.is_shared_keys_allowed()
-    configured_only = result_store.is_configured_only()
+    shared_keys = get_result_store().list_plugin_api_keys(user_id=0)
+    shared_keys_allowed = get_result_store().is_shared_keys_allowed()
+    configured_only = get_result_store().is_configured_only()
     registry = _get_plugin_key_registry()
+    usage_snapshot = get_result_store().get_api_usage_snapshot(
+        plugin_key_scope="shared",
+        llm_source=None,
+        since_days=30,
+    )
+    plugin_usage_by_name = {
+        row["plugin_name"]: row for row in usage_snapshot["plugin_summary"]
+    }
     msg = request.query_params.get("msg", "")
 
     return templates.TemplateResponse(
@@ -1215,6 +1257,8 @@ async def api_keys_admin_page(request: Request):
             shared_keys_allowed=shared_keys_allowed,
             configured_only=configured_only,
             registry=registry,
+            usage_snapshot=usage_snapshot,
+            plugin_usage_by_name=plugin_usage_by_name,
             msg=msg,
         ),
     )
@@ -1237,7 +1281,7 @@ async def api_keys_admin_save(
             status_code=303,
         )
 
-    result_store.save_plugin_api_key(
+    get_result_store().save_plugin_api_key(
         user_id=0, plugin_name=plugin_name, api_key=api_key.strip()
     )
     admin_db.log_action(
@@ -1258,7 +1302,7 @@ async def api_keys_admin_delete(request: Request, plugin_name: str):
     if not user or not user.get("is_admin"):
         return login_redirect(request)
 
-    result_store.delete_plugin_api_key(user_id=0, plugin_name=plugin_name)
+    get_result_store().delete_plugin_api_key(user_id=0, plugin_name=plugin_name)
     admin_db.log_action(
         user["id"],
         "shared_api_key_delete",
@@ -1281,8 +1325,8 @@ async def api_keys_policy_toggle(
     if not user or not user.get("is_admin"):
         return login_redirect(request)
 
-    result_store.set_shared_keys_policy(allow_shared)
-    result_store.set_configured_only_policy(configured_only)
+    get_result_store().set_shared_keys_policy(allow_shared)
+    get_result_store().set_configured_only_policy(configured_only)
     status = "allowed" if allow_shared else "disallowed"
     admin_db.log_action(
         user["id"], "shared_key_policy", f"Shared key usage {status} for regular users"
@@ -1303,13 +1347,21 @@ async def api_keys_user_page(request: Request):
     if not user:
         return login_redirect(request)
 
-    user_keys = result_store.list_plugin_api_keys(user_id=user["id"])
+    user_keys = get_result_store().list_plugin_api_keys(user_id=user["id"])
     registry = _get_plugin_key_registry()
     shared_access = {
         plugin["plugin_name"]: admin_db.can_user_use_shared_plugin(
             user["id"], plugin["plugin_name"]
         )
         for plugin in PLUGIN_API_KEY_REGISTRY
+    }
+    usage_snapshot = get_result_store().get_api_usage_snapshot(
+        user_id=user["id"],
+        include_shared_for_user=True,
+        since_days=30,
+    )
+    plugin_usage_by_name = {
+        row["plugin_name"]: row for row in usage_snapshot["plugin_summary"]
     }
     msg = request.query_params.get("msg", "")
 
@@ -1321,8 +1373,47 @@ async def api_keys_user_page(request: Request):
             user_keys=user_keys,
             registry=registry,
             shared_access=shared_access,
+            usage_snapshot=usage_snapshot,
+            plugin_usage_by_name=plugin_usage_by_name,
             msg=msg,
         ),
+    )
+
+
+@router.get("/api/usage")
+async def api_usage_json(request: Request):
+    """Return scoped API usage statistics for the current user/admin."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(
+            {"ok": False, "error": "Not authenticated"}, status_code=401
+        )
+
+    if user.get("is_admin"):
+        payload = get_result_store().get_api_usage_snapshot(since_days=30)
+    else:
+        payload = get_result_store().get_api_usage_snapshot(
+            user_id=user["id"],
+            include_shared_for_user=True,
+            since_days=30,
+        )
+
+    return JSONResponse({"ok": True, **payload})
+
+
+@router.get("/usage", response_class=HTMLResponse)
+async def api_usage_page(request: Request):
+    """Admin HTML page for API usage statistics."""
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(request)
+    if not user.get("is_admin"):
+        return RedirectResponse(f"{settings.root_path}/admin/profile", status_code=303)
+
+    usage_snapshot = get_result_store().get_api_usage_snapshot(since_days=30)
+    return templates.TemplateResponse(
+        "admin/usage.html.j2",
+        _admin_context(request, user, usage_snapshot=usage_snapshot),
     )
 
 
@@ -1343,7 +1434,7 @@ async def api_keys_user_save(
             status_code=303,
         )
 
-    result_store.save_plugin_api_key(
+    get_result_store().save_plugin_api_key(
         user_id=user["id"], plugin_name=plugin_name, api_key=api_key.strip()
     )
     admin_db.log_action(
@@ -1364,7 +1455,9 @@ async def api_keys_user_delete(request: Request, plugin_name: str):
     if not user:
         return login_redirect(request)
 
-    result_store.delete_plugin_api_key(user_id=user["id"], plugin_name=plugin_name)
+    get_result_store().delete_plugin_api_key(
+        user_id=user["id"], plugin_name=plugin_name
+    )
     admin_db.log_action(
         user["id"],
         "personal_api_key_delete",
