@@ -214,6 +214,40 @@ class TestRDAPCollector:
         assert result["data"]["country"] == "US"
         assert "entities" in result["data"]
 
+    @pytest.mark.asyncio
+    async def test_query_enables_redirect_following(self, collector):
+        """RDAP collector should opt into redirect following for registry handoff."""
+        captured = {}
+
+        async def _fake_make_request(
+            url, headers=None, params=None, follow_redirects=False
+        ):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["params"] = params
+            captured["follow_redirects"] = follow_redirects
+            return {
+                "ok": True,
+                "data": {
+                    "handle": "NET-TEST",
+                    "startAddress": "79.124.62.0",
+                    "endAddress": "79.124.62.255",
+                    "ipVersion": "v4",
+                    "name": "TEST-NET",
+                    "country": "NL",
+                    "cidr0_cidrs": [{"v4prefix": "79.124.62.0", "length": 24}],
+                },
+                "error": None,
+            }
+
+        with patch.object(collector, "_make_request", side_effect=_fake_make_request):
+            result = await collector.query("79.124.62.122")
+
+        assert captured["url"] == "https://rdap.arin.net/registry/ip/79.124.62.122"
+        assert captured["follow_redirects"] is True
+        assert result["ok"] is True
+        assert result["data"]["name"] == "TEST-NET"
+
 
 class TestReverseDNSCollector:
     """Test Reverse DNS collector."""

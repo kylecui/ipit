@@ -44,6 +44,7 @@ class BaseCollector(ABC):
         url: str,
         headers: Optional[Dict[str, str]] = None,
         params: Optional[Dict[str, Any]] = None,
+        follow_redirects: bool = False,
     ) -> Dict[str, Any]:
         """
         Make HTTP request with error handling and retries.
@@ -58,7 +59,12 @@ class BaseCollector(ABC):
         for attempt in range(self.max_retries + 1):
             try:
                 async with AsyncClient(timeout=self.timeout) as client:
-                    response = await client.get(url, headers=headers, params=params)
+                    response = await client.get(
+                        url,
+                        headers=headers,
+                        params=params,
+                        follow_redirects=follow_redirects,
+                    )
                     response.raise_for_status()
 
                     # Try to parse JSON response

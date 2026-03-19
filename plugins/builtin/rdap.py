@@ -38,7 +38,7 @@ class RDAPPlugin(TIPlugin):
     async def query(self, observable: str, obs_type: str) -> PluginResult:
         url = f"https://rdap.arin.net/registry/ip/{observable}"
 
-        result = await self._make_request(url)
+        result = await self._make_request(url, follow_redirects=True)
 
         if not result["ok"]:
             return self._error_result(result["error"])

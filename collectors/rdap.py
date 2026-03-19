@@ -31,7 +31,7 @@ class RDAPCollector(BaseCollector):
         # For now, implement basic RDAP query
         url = f"https://rdap.arin.net/registry/ip/{observable}"
 
-        result = await self._make_request(url)
+        result = await self._make_request(url, follow_redirects=True)
 
         if result["ok"]:
             data = result["data"]

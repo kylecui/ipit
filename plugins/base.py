@@ -136,6 +136,7 @@ class TIPlugin(ABC):
         json_body: dict[str, Any] | None = None,
         timeout: float = 15.0,
         max_retries: int = 2,
+        follow_redirects: bool = False,
     ) -> dict[str, Any]:
         """Make HTTP request with error handling and retries.
 
@@ -149,10 +150,19 @@ class TIPlugin(ABC):
             try:
                 async with AsyncClient(timeout=Timeout(timeout)) as client:
                     if method.upper() == "GET":
-                        response = await client.get(url, headers=headers, params=params)
+                        response = await client.get(
+                            url,
+                            headers=headers,
+                            params=params,
+                            follow_redirects=follow_redirects,
+                        )
                     elif method.upper() == "POST":
                         response = await client.post(
-                            url, headers=headers, params=params, json=json_body
+                            url,
+                            headers=headers,
+                            params=params,
+                            json=json_body,
+                            follow_redirects=follow_redirects,
                         )
                     else:
                         raise ValueError(f"Unsupported HTTP method: {method}")
