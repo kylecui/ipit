@@ -6,3 +6,7 @@ cache/*.db
 .ruff_cache/
 .prompts.litcoffee
 nul
+.tmp_tirev2_analyze_final.html
+data/admin.db
+data/results.db
+data/*.db
