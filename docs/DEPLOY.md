@@ -1,10 +1,19 @@
-# TIRE 部署指南 — 内部测试环境
+# TIRE 部署指南 — 当前主线部署模式
 
 ## 前置条件
 
 - 一台 Linux 服务器（推荐 Ubuntu 22.04+，2核4G）
 - Docker 24+ 和 Docker Compose v2
 - 威胁情报 API 密钥（可选，但推荐至少配置 AbuseIPDB）
+
+---
+
+## 当前部署原则
+
+- 当前主系统为 **TIRE V2**
+- 系统直接运行于根路径 `/`
+- 对外访问 Host 为 `tire.rswitch.dev`
+- 非 `tire.rswitch.dev` 的 Host 请求应在反向代理层被拒绝
 
 ---
 
@@ -44,7 +53,7 @@ curl http://localhost/api/v1/ip/8.8.8.8
 
 ### 5. 访问 Web 界面
 
-浏览器打开 `http://<服务器IP>/`
+浏览器打开 `https://tire.rswitch.dev/`
 
 ---
 
@@ -72,7 +81,35 @@ docker compose down -v
 
 ## 安全加固（推荐）
 
-### 方式 1：IP 白名单（推荐）
+### 方式 1：Host 限制（当前推荐）
+
+当前推荐在 Nginx 中仅放行目标 Host：
+
+```nginx
+server {
+    listen 80;
+    server_name tire.rswitch.dev;
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name tire.rswitch.dev;
+    location / {
+        proxy_pass http://tire_backend;
+    }
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+```
+
+### 方式 2：IP 白名单（可选增强）
 
 编辑 `nginx/nginx.conf`，取消注释 IP 白名单部分：
 
@@ -90,13 +127,13 @@ deny all;
 docker compose restart nginx
 ```
 
-### 方式 2：云厂商安全组
+### 方式 3：云厂商安全组
 
 在云服务器控制台，配置安全组规则：
 - 仅放行公司出口 IP 的 80/443 端口
 - 放行 22 端口（SSH 管理，仅限运维 IP）
 
-### 方式 3：Basic Auth
+### 方式 4：Basic Auth
 
 ```bash
 # 在服务器上生成密码文件
@@ -110,6 +147,18 @@ htpasswd -c nginx/htpasswd tire-user
 # 在 docker-compose.yml 的 nginx volumes 中添加：
 # - ./nginx/htpasswd:/etc/nginx/htpasswd:ro
 ```
+
+---
+
+## ROOT_PATH 说明
+
+当前主线部署模式中，TIRE V2 直接运行于 `/`，因此通常应保持：
+
+```bash
+ROOT_PATH=
+```
+
+只有在部署于子路径时，才需要设置类似 `/subpath` 的前缀。
 
 ---
 
@@ -165,9 +214,9 @@ ss -tlnp | grep 80
   用户浏览器 / API 调用
          │
          ▼
-  ┌──────────────┐
-  │   Nginx :80  │  反向代理、安全头、IP白名单
-  └──────┬───────┘
+   ┌──────────────┐
+   │ Nginx :80/443│  Host限制、TLS、反向代理、安全头
+   └──────┬───────┘
          │
          ▼
   ┌──────────────┐

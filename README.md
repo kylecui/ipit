@@ -86,7 +86,21 @@ uv run uvicorn app.api:app --reload
 cp .env.example .env
 # Edit .env with your API keys
 docker compose up -d
-# Open http://localhost:8000/
+# Open http://localhost:8000/ (direct app) or the configured reverse-proxy host
+```
+
+### Production Access Model
+
+The current primary deployment model is:
+
+- TIRE V2 is served at `/` (root path)
+- the public host is `tire.rswitch.dev`
+- non-target Host headers should be rejected by the reverse proxy
+
+If you deploy behind a reverse proxy, the expected public entrypoint is:
+
+```text
+https://tire.rswitch.dev/
 ```
 
 ## Usage
@@ -128,9 +142,17 @@ Example lookup with curl:
 curl http://localhost:8000/api/v1/ip/8.8.8.8
 ```
 
+When deployed behind the production host restriction, use:
+
+```bash
+curl https://tire.rswitch.dev/api/v1/ip/8.8.8.8
+```
+
 ### Web Dashboard
 
 Access the dashboard at `http://localhost:8000/`. Enter an IP address and click **Analyze** to see color-coded results with evidence. Click **Generate Report** for an AI-powered narrative report. Use the language switcher in the navbar to toggle between English and Chinese.
+
+In the current root-path deployment model, the public dashboard entrypoint is `https://tire.rswitch.dev/`.
 
 ## Configuration
 

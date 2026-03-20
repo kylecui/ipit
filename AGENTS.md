@@ -5,11 +5,12 @@
 
 ## Branch & Deployment
 
-- **Development branch**: `dev` — all V2 work happens here.
-- **Production V1**: served at `/` (root path). Must never be affected by V2 changes.
-- **Production V2**: served at `/v2` (sub-path via `ROOT_PATH=/v2`).
-- **Test server**: `ssh root@45.136.13.56` — runs both V1 and V2 simultaneously.
-- **Golden rule**: V2 development and testing must **never** break V1.
+- **Primary branch**: `master` — current mainline development happens here.
+- **Archived branch**: `master-archive` — preserved snapshot of the old master line before promotion.
+- **Current deployment model**: TIRE V2 is served at `/` (root path).
+- **Host restriction**: the active deployment must only be reachable via `tire.rswitch.dev`.
+- **Test server**: `ssh root@45.136.13.56` — now serves only the current TIRE V2 deployment.
+- **Deployment rule**: all docs, config, and operational changes must reflect the root-path deployment and host restriction above.
 
 ## Project Maturity
 
