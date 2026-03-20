@@ -281,7 +281,7 @@ curl -k -L -H "Host: tire.rswitch.dev" https://127.0.0.1/ | head -n 40
 
 - `<html lang="zh">`
 - `登录`
-- `管理后台`
+- `威胁情报推理引擎`
 
 ---
 
