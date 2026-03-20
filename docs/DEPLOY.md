@@ -12,8 +12,8 @@
 
 - 当前主系统为 **TIRE V2**
 - 系统直接运行于根路径 `/`
-- 对外访问 Host 为 `tire.rswitch.dev`
-- 非 `tire.rswitch.dev` 的 Host 请求应在反向代理层被拒绝
+- 对外访问 Host 应由部署者自行配置
+- 如需 Host 限制，应由部署者在反向代理层启用并替换为自己的域名
 
 ---
 
@@ -53,7 +53,7 @@ curl http://localhost/api/v1/ip/8.8.8.8
 
 ### 5. 访问 Web 界面
 
-浏览器打开 `https://tire.rswitch.dev/`
+浏览器打开你实际配置的域名，例如 `https://your.domain.example/`
 
 ---
 
@@ -61,10 +61,10 @@ curl http://localhost/api/v1/ip/8.8.8.8
 
 ```bash
 # 查看日志
-docker compose logs -f tire
+docker compose logs -f tirev2-app
 
 # 重启服务
-docker compose restart tire
+docker compose restart tirev2-app
 
 # 更新代码后重新部署
 git pull
@@ -83,12 +83,18 @@ docker compose down -v
 
 ### 方式 1：Host 限制（当前推荐）
 
-当前推荐在 Nginx 中仅放行目标 Host：
+仓库中提供的是示例文件：
+
+```text
+nginx/nginx.conf.example
+```
+
+部署时建议先复制为你的实际配置文件，再替换域名和证书路径。仓库中的示例文件不能直接作为生产配置使用。若希望仅放行目标 Host，可参考：
 
 ```nginx
 server {
     listen 80;
-    server_name tire.rswitch.dev;
+    server_name your.domain.example;
     location / {
         return 301 https://$host$request_uri;
     }
@@ -96,7 +102,7 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name tire.rswitch.dev;
+    server_name your.domain.example;
     location / {
         proxy_pass http://tire_backend;
     }
@@ -111,7 +117,7 @@ server {
 
 ### 方式 2：IP 白名单（可选增强）
 
-编辑 `nginx/nginx.conf`，取消注释 IP 白名单部分：
+编辑你复制后的实际 Nginx 配置文件，取消注释 IP 白名单部分：
 
 ```nginx
 allow 10.0.0.0/8;         # 内网 A 类
@@ -121,10 +127,14 @@ allow 203.0.113.50/32;    # 替换为你的公司出口 IP
 deny all;
 ```
 
-修改后重启 Nginx：
+修改后重载或重启你实际部署的 Nginx：
 
 ```bash
-docker compose restart nginx
+# 例如（宿主机 Nginx）
+sudo nginx -s reload
+
+# 或（独立容器化 Nginx）
+docker restart <your-nginx-container>
 ```
 
 ### 方式 3：云厂商安全组
@@ -144,8 +154,8 @@ htpasswd -c nginx/htpasswd tire-user
 # auth_basic "TIRE Internal";
 # auth_basic_user_file /etc/nginx/htpasswd;
 
-# 在 docker-compose.yml 的 nginx volumes 中添加：
-# - ./nginx/htpasswd:/etc/nginx/htpasswd:ro
+# 如果你使用独立 Nginx 容器，请将该文件挂载到容器中的 /etc/nginx/htpasswd；
+# 如果你使用宿主机 Nginx，请将其放到实际 Nginx 配置引用的位置。
 ```
 
 ---
@@ -182,7 +192,7 @@ TIRE_PORT=8080 docker compose up -d
 
 ```bash
 # 重启应用以加载新规则
-docker compose restart tire
+docker compose restart tirev2-app
 ```
 
 ---
@@ -194,17 +204,33 @@ docker compose restart tire
 docker compose ps
 
 # 查看应用日志
-docker compose logs tire --tail=50
+docker compose logs tirev2-app --tail=50
 
-# 查看 Nginx 日志
-docker compose logs nginx --tail=50
+# 查看 Nginx 日志（按你的实际部署方式选择）
+docker logs <your-nginx-container> --tail=50
+# 或
+journalctl -u nginx -n 50 --no-pager
 
 # 进入容器调试
-docker compose exec tire /bin/bash
+docker compose exec tirev2-app /bin/bash
 
 # 检查端口占用
 ss -tlnp | grep 80
 ```
+
+---
+
+## Nginx 示例文件使用方式
+
+```bash
+cp nginx/nginx.conf.example /your/deploy/path/nginx.conf
+```
+
+然后根据你的环境至少替换以下内容：
+
+1. `your.domain.example`
+2. TLS 证书路径
+3. 是否启用默认 Host 拒绝策略（`return 444`）
 
 ---
 

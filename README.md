@@ -94,14 +94,26 @@ docker compose up -d
 The current primary deployment model is:
 
 - TIRE V2 is served at `/` (root path)
-- the public host is `tire.rswitch.dev`
-- non-target Host headers should be rejected by the reverse proxy
+- you should choose and configure your own public domain
+- non-target Host headers may be rejected by the reverse proxy if you enable host-based restriction
 
 If you deploy behind a reverse proxy, the expected public entrypoint is:
 
 ```text
-https://tire.rswitch.dev/
+https://your.domain.example/
 ```
+
+For open-source usage, do **not** commit your real production hostname or certificate paths into the repository. Use the provided example config:
+
+```text
+nginx/nginx.conf.example
+```
+
+and copy it to your deployment environment as `nginx.conf`, then replace:
+
+- `your.domain.example`
+- TLS certificate paths
+- any host-restriction policy
 
 ## Usage
 
@@ -142,17 +154,17 @@ Example lookup with curl:
 curl http://localhost:8000/api/v1/ip/8.8.8.8
 ```
 
-When deployed behind the production host restriction, use:
+When deployed behind your production reverse proxy, use:
 
 ```bash
-curl https://tire.rswitch.dev/api/v1/ip/8.8.8.8
+curl https://your.domain.example/api/v1/ip/8.8.8.8
 ```
 
 ### Web Dashboard
 
 Access the dashboard at `http://localhost:8000/`. Enter an IP address and click **Analyze** to see color-coded results with evidence. Click **Generate Report** for an AI-powered narrative report. Use the language switcher in the navbar to toggle between English and Chinese.
 
-In the current root-path deployment model, the public dashboard entrypoint is `https://tire.rswitch.dev/`.
+In the current root-path deployment model, the public dashboard entrypoint is `https://your.domain.example/`.
 
 ## Configuration
 
@@ -221,7 +233,7 @@ Grouped by category in `.env`:
 ├── locales/                # i18n translation files (en.json, zh.json)
 ├── docker-compose.yml
 ├── Dockerfile
-├── nginx/nginx.conf
+├── nginx/nginx.conf.example
 └── requirements.txt
 ```
 
