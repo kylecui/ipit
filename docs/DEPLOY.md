@@ -277,15 +277,66 @@ docker compose logs -f tirev2-app
 # 重启服务
 docker compose restart tirev2-app
 
-# 更新代码后重新部署
-git pull
-docker compose up -d --build
-
 # 停止服务
 docker compose down
 
 # 停止并清除缓存数据
 docker compose down -v
+```
+
+---
+
+## 标准升级流程
+
+当仓库有新提交时，使用以下流程升级已部署的环境。
+
+### 基本升级（最常见场景）
+
+```bash
+cd /opt/tire
+git pull origin master
+docker compose up -d --build
+```
+
+这会：
+- 拉取最新代码
+- 增量重建 Docker 镜像（仅重建变更层，通常很快）
+- 重新创建并启动应用容器
+
+不会影响：
+- `.env` 配置（密钥、语言等）
+- SQLite 数据库（管理后台数据、查询结果、缓存）
+- 外部 Nginx 配置
+- SSL 证书
+
+### 升级后验证
+
+```bash
+# 健康检查
+curl http://localhost:8000/healthz
+# 预期: {"status":"healthy","service":"threat-intel-reasoning-engine"}
+
+# 如果使用反向代理
+curl -k -H "Host: your.domain.example" https://127.0.0.1/healthz
+```
+
+### 特殊情况
+
+**依赖包变更（requirements.txt 更新）：**
+`docker compose up -d --build` 会自动检测并重新安装。
+
+**Nginx 配置示例变更：**
+仓库中的 `nginx/nginx.conf.example` 更新后，手动对比并合并到你的实际配置：
+```bash
+diff /your/nginx.active.conf /opt/tire/nginx/nginx.conf.example
+# 手动合并后重启 Nginx
+```
+
+**`.env.example` 新增配置项：**
+```bash
+diff /opt/tire/.env /opt/tire/.env.example
+# 手动补充新增项到 .env，然后：
+docker compose up -d
 ```
 
 ---

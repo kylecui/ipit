@@ -298,20 +298,85 @@ curl -k -L -H "Host: tire.rswitch.dev" https://127.0.0.1/ | head -n 40
 
 ---
 
-## 后续更新方式
+## 标准升级流程（已验证）
 
-后续如果只是更新代码，不需要重做全量清理，可执行：
+当仓库有新的代码提交（例如 Bug 修复、新功能、UI 调整）时，使用以下流程升级已部署的测试环境。**无需重做全量清理。**
+
+### 前置条件
+
+- 测试服务器已按本手册完成初始部署
+- `.env` 中的密钥（`TIRE_FERNET_KEY`、`SESSION_SECRET_KEY`）未变动
+- 无需修改 Nginx 配置（如需修改，参见下方说明）
+
+### 执行步骤
 
 ```bash
 ssh root@45.136.13.56
 cd /opt/tire
+
+# 1. 拉取最新代码
 git pull origin master
+
+# 2. 重新构建并重启应用容器
 docker compose up -d --build
+
+# 3. 如果本次更新涉及 Nginx 配置示例变更，需要同步并重启 Nginx
+#    （大多数情况不需要此步骤）
+# docker restart tire-nginx
+```
+
+### 验证升级结果
+
+```bash
+# 健康检查
+curl -k -H "Host: tire.rswitch.dev" https://127.0.0.1/healthz
+# 预期: {"status":"healthy","service":"threat-intel-reasoning-engine"}
+
+# 确认页面变更生效（示例：检查登录页内容）
+curl -k -L -s -H "Host: tire.rswitch.dev" https://127.0.0.1/ | head -n 40
+```
+
+### 升级范围说明
+
+本流程会更新的内容：
+
+- 应用代码（Python 后端、模板、i18n、规则文件等）
+- Docker 镜像重新构建（如依赖包变更，会自动更新）
+
+本流程**不会**影响的内容：
+
+- `.env` 配置（密钥、语言设置等保持不变）
+- SQLite 数据库（管理后台数据、缓存数据保持不变）
+- Nginx 配置（`nginx.active.conf` 不会被覆盖）
+- SSL 证书
+
+### 特殊情况处理
+
+**如果依赖包变更（requirements.txt 更新）：**
+`docker compose up -d --build` 会自动检测并重新安装，无需额外操作。
+
+**如果 Nginx 配置示例有变更：**
+需要手动对比并合并更新：
+```bash
+diff /opt/tire/nginx/nginx.active.conf /opt/tire/nginx/nginx.conf.example
+# 根据差异手动调整 nginx.active.conf，然后：
 docker restart tire-nginx
 ```
 
-如果 `.env` 保持不变，则：
+**如果 `.env.example` 新增了必要配置项：**
+对比并补充到 `.env`：
+```bash
+diff /opt/tire/.env /opt/tire/.env.example
+# 根据差异手动补充新增项到 .env，然后重启：
+docker compose up -d
+```
 
-- `LANGUAGE=zh` 会持续生效；
-- `TIRE_FERNET_KEY` 和 `SESSION_SECRET_KEY` 会保持稳定；
-- 已录入的密钥类配置可以继续使用。
+### 已验证升级结果
+
+以下升级场景已在测试服务器上实际验证通过：
+
+- `git pull origin master` — Fast-forward 合并，无冲突
+- `docker compose up -d --build` — 增量构建，仅重建变更层，耗时约 5 秒
+- `/healthz` 返回 200，应用正常运行
+- 登录页 UI 变更立即生效（"管理后台" → "威胁情报推理引擎"）
+- `.env` 配置、数据库、Nginx 均未受影响
