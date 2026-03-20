@@ -57,6 +57,217 @@ curl http://localhost/api/v1/ip/8.8.8.8
 
 ---
 
+## 已验证的“保留证书、其余从头部署”流程
+
+如果你需要一份面向测试服务器、可直接照着执行的独立操作手册，请参阅：
+
+```text
+docs/TEST_SERVER_DEPLOY.md
+```
+
+以下流程适用于：
+
+- 旧应用部署、旧代码目录、旧运行数据全部重建；
+- **仅保留原有 SSL 证书目录**；
+- 使用当前仓库 `master` 分支重新部署；
+- 反向代理使用 **独立 Nginx 容器**；
+- 测试环境默认语言设置为中文（`LANGUAGE=zh`）。
+
+### 场景说明
+
+如果你希望在一台已有历史部署痕迹的服务器上，从头重新部署 TIRE，但仍继续复用现有证书，可按以下顺序执行。
+
+> 说明：下面命令会删除旧应用目录和 TIRE 相关 Docker 数据卷。执行前请确认不再需要旧的运行数据。
+
+### 1. 清理旧应用（保留证书目录）
+
+```bash
+docker rm -f tire-nginx tirev2-app tire-app 2>/dev/null || true
+docker volume rm \
+  tire_tire-cache \
+  tirev2_tirev2-admin \
+  tirev2_tirev2-cache \
+  tirev2_tirev2-data \
+  tirev2_tirev2-storage 2>/dev/null || true
+
+rm -rf /opt/tire /opt/tirev2
+```
+
+保留不删的内容：
+
+- `/srv/letsencrypt/...` 证书目录
+- SSH / 系统基础环境
+
+### 2. 重新拉取代码
+
+```bash
+git clone https://github.com/kylecui/ipit.git /opt/tire
+cd /opt/tire
+git checkout master
+git pull origin master
+```
+
+### 3. 初始化全新 `.env`
+
+```bash
+cp .env.example .env
+```
+
+至少确认以下配置：
+
+```dotenv
+LANGUAGE=zh
+ROOT_PATH=
+TIRE_PORT=8000
+LOG_LEVEL=INFO
+PUBLIC_HOST=tire.rswitch.dev
+```
+
+并生成新的密钥：
+
+```bash
+python3 - <<'PY'
+from cryptography.fernet import Fernet
+print("TIRE_FERNET_KEY=" + Fernet.generate_key().decode())
+print("SESSION_SECRET_KEY=" + Fernet.generate_key().decode())
+PY
+```
+
+将输出填入 `.env` 中。注意：
+
+- 不要复用未知来源的旧 `TIRE_FERNET_KEY`
+- 如果旧环境没有固定 `TIRE_FERNET_KEY`，旧数据库里加密保存的密钥通常不可恢复，建议重新录入
+
+### 4. 启动应用容器
+
+```bash
+cd /opt/tire
+docker compose up -d --build
+```
+
+### 5. 生成实际使用的 Nginx 配置
+
+仓库中提供的是示例文件：
+
+```text
+nginx/nginx.conf.example
+```
+
+部署时可复制一份生成实际配置，例如：
+
+```bash
+cp /opt/tire/nginx/nginx.conf.example /opt/tire/nginx/nginx.active.conf
+```
+
+然后将其中内容替换为你的实际值：
+
+- `your.domain.example` → 真实域名（例如 `tire.rswitch.dev`）
+- `/path/to/your/fullchain.pem` → 实际证书路径
+- `/path/to/your/privkey.pem` → 实际私钥路径
+
+如果你沿用历史 LetsEncrypt 目录并通过 `/srv/letsencrypt/etc` 挂载到 Nginx 容器，可使用：
+
+```text
+/srv/letsencrypt/etc/live/tire.rswitch.dev/fullchain.pem
+/srv/letsencrypt/etc/live/tire.rswitch.dev/privkey.pem
+```
+
+### 6. 启动独立 Nginx 容器
+
+```bash
+docker rm -f tire-nginx 2>/dev/null || true
+
+docker run -d \
+  --name tire-nginx \
+  --restart unless-stopped \
+  --network tire_tirev2-net \
+  -p 80:80 \
+  -p 443:443 \
+  -v /opt/tire/nginx/nginx.active.conf:/etc/nginx/conf.d/default.conf:ro \
+  -v /srv/letsencrypt/www:/var/www/letsencrypt:ro \
+  -v /srv/letsencrypt/etc:/srv/letsencrypt/etc:ro \
+  nginx:alpine
+```
+
+验证 Nginx 配置：
+
+```bash
+docker exec tire-nginx nginx -t
+```
+
+### 7. 验证部署结果
+
+#### 验证应用容器
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+cd /opt/tire && docker compose exec tirev2-app /bin/sh -lc 'printenv | grep -E "^(LANGUAGE|ROOT_PATH|TIRE_PORT)="'
+```
+
+预期至少包含：
+
+```text
+LANGUAGE=zh
+ROOT_PATH=
+TIRE_PORT=8000
+```
+
+#### 验证健康检查
+
+```bash
+curl -k -H "Host: tire.rswitch.dev" https://127.0.0.1/healthz
+```
+
+预期：
+
+```json
+{"status":"healthy","service":"threat-intel-reasoning-engine"}
+```
+
+#### 验证根路径入口
+
+```bash
+curl -k -i -H "Host: tire.rswitch.dev" https://127.0.0.1/
+```
+
+预期返回：
+
+- `303 See Other`
+- `location: /admin/login?next=%2F`
+
+#### 验证 Host 限制
+
+```bash
+curl -k -I -H "Host: not-allowed.example" https://127.0.0.1/
+```
+
+如果默认拒绝块生效，通常会看到连接被关闭（例如 curl 返回 `Failure when receiving data from the peer`）。
+
+#### 验证默认中文界面
+
+```bash
+curl -k -L -H "Host: tire.rswitch.dev" https://127.0.0.1/ | head -n 40
+```
+
+可检查返回页面中是否包含：
+
+- `<html lang="zh">`
+- `登录`
+- `管理后台`
+
+### 8. 已验证行为（供后续 agent 参考）
+
+在一台保留 `/srv/letsencrypt` 证书目录的测试服务器上，以上流程已验证通过，结果包括：
+
+- `tirev2-app` 健康启动
+- `tire-nginx` 正常提供 80/443 入口
+- `/healthz` 返回 200
+- `/` 返回 303 并跳转到 `/admin/login?next=%2F`
+- 非目标 Host 被拒绝
+- 登录页默认语言为中文（`<html lang="zh">`）
+
+---
+
 ## 常用运维命令
 
 ```bash
