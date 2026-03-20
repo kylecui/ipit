@@ -1,0 +1,157 @@
+upstream tire_backend {
+    server tirev2-app:8000;
+}
+
+# Option A: TLS-enabled deployment.
+# Keep the two server blocks below if you want HTTP -> HTTPS redirect plus HTTPS serving.
+#
+# Option B: HTTP-only deployment.
+# If you do not use TLS, remove the redirect/TLS blocks below and use the
+# commented port-80 example further down in this file instead.
+
+server {
+    listen 80;
+    server_name your.domain.example;
+
+    # Replace the server_name above with your real public domain.
+    # If you do not serve TLS here, adjust or remove the redirect below.
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        access_log off;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTP-only example (non-SSL, port 80 only)
+# Uncomment this server block if you want to expose TIRE without TLS.
+# server {
+#     listen 80;
+#     server_name your.domain.example;
+#
+#     client_max_body_size 10m;
+#     add_header X-Content-Type-Options "nosniff" always;
+#     add_header X-XSS-Protection "1; mode=block" always;
+#     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+#
+#     location ^~ /reports/view/ {
+#         proxy_pass http://tire_backend/reports/view/;
+#         add_header X-Frame-Options SAMEORIGIN always;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_connect_timeout 10s;
+#         proxy_read_timeout 120s;
+#         proxy_send_timeout 10s;
+#     }
+#
+#     location /healthz {
+#         access_log off;
+#         proxy_pass http://tire_backend;
+#         add_header X-Frame-Options DENY always;
+#     }
+#
+#     location /readyz {
+#         access_log off;
+#         proxy_pass http://tire_backend;
+#         add_header X-Frame-Options DENY always;
+#     }
+#
+#     location / {
+#         proxy_pass http://tire_backend;
+#         add_header X-Frame-Options DENY always;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_connect_timeout 10s;
+#         proxy_read_timeout 120s;
+#         proxy_send_timeout 10s;
+#     }
+#
+#     location ~ /\. {
+#         deny all;
+#         return 404;
+#     }
+# }
+
+server {
+    listen 443 ssl http2;
+    server_name your.domain.example;
+
+    # Replace the certificate paths below with your own TLS certificate files.
+    ssl_certificate /path/to/your/fullchain.pem;
+    ssl_certificate_key /path/to/your/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    client_max_body_size 10m;
+
+    location ^~ /reports/view/ {
+        proxy_pass http://tire_backend/reports/view/;
+        add_header X-Frame-Options SAMEORIGIN always;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 10s;
+    }
+
+    location /healthz {
+        access_log off;
+        proxy_pass http://tire_backend;
+        add_header X-Frame-Options DENY always;
+    }
+
+    location /readyz {
+        access_log off;
+        proxy_pass http://tire_backend;
+        add_header X-Frame-Options DENY always;
+    }
+
+    location / {
+        proxy_pass http://tire_backend;
+        add_header X-Frame-Options DENY always;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 10s;
+    }
+
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    # Optional hardening: reject requests for unexpected Host headers.
+    return 444;
+}
+
+server {
+    listen 443 ssl http2 default_server;
+    server_name _;
+
+    # Replace with a valid certificate if you want to reject non-target hosts over TLS.
+    ssl_certificate /path/to/your/fullchain.pem;
+    ssl_certificate_key /path/to/your/privkey.pem;
+    return 444;
+}
