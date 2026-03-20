@@ -8,9 +8,9 @@
 - **Primary branch**: `master` — current mainline development happens here.
 - **Archived branch**: `master-archive` — preserved snapshot of the old master line before promotion.
 - **Current deployment model**: TIRE V2 is served at `/` (root path).
-- **Host restriction**: the active deployment must only be reachable via `tire.rswitch.dev`.
-- **Test server**: `ssh root@45.136.13.56` — now serves only the current TIRE V2 deployment.
-- **Deployment rule**: all docs, config, and operational changes must reflect the root-path deployment and host restriction above.
+- **Host restriction**: production deployments should be restricted at the reverse-proxy layer to the deployer's chosen canonical host.
+- **Environment-specific values**: test-server addresses, real domains, TLS certificate paths, and other deployment-specific values must stay out of committed repository config; provide examples and documentation placeholders instead.
+- **Deployment rule**: all docs, config, and operational changes must reflect the root-path deployment model and avoid hardcoding environment-specific infrastructure values.
 
 ## Project Maturity
 

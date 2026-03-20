@@ -7,6 +7,12 @@ cache/*.db
 .prompts.litcoffee
 nul
 .tmp_tirev2_analyze_final.html
+.tmp_cutover_nginx.conf
 data/admin.db
 data/results.db
 data/*.db
+nginx/nginx.conf
+nginx/*.pem
+nginx/*.key
+nginx/*.crt
+nginx/htpasswd
