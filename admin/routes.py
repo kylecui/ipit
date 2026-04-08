@@ -30,6 +30,14 @@ templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "..", "templates")
 )
 
+
+def render_template(
+    name: str, request: Request, context: dict[str, Any]
+) -> HTMLResponse:
+    """Render a Jinja template using the Starlette-compatible call signature."""
+    return templates.TemplateResponse(request, name, context)
+
+
 # ── Plugin config helpers ───────────────────────────────────────
 
 
@@ -263,8 +271,9 @@ async def login_page(request: Request):
         return RedirectResponse(redirect_to, status_code=303)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
-    return templates.TemplateResponse(
+    return render_template(
         "admin/login.html.j2",
+        request,
         {
             "request": request,
             "t": t,
@@ -286,8 +295,9 @@ async def login_submit(
     if not user:
         lang = _get_lang(request)
         t = i18n.get_translator(lang)
-        return templates.TemplateResponse(
+        return render_template(
             "admin/login.html.j2",
+            request,
             {
                 "request": request,
                 "t": t,
@@ -326,8 +336,9 @@ async def admin_dashboard(request: Request):
     llm_configured = bool(llm.get("api_key"))
     recent_logs = admin_db.get_recent_logs(10) if user.get("is_admin") else []
     usage_snapshot = get_result_store().get_api_usage_snapshot(since_days=30)
-    return templates.TemplateResponse(
+    return render_template(
         "admin/dashboard.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -350,8 +361,9 @@ async def plugin_list(request: Request):
         return login_redirect(request)
     plugins = _get_all_plugins_info()
     msg = request.query_params.get("msg", "")
-    return templates.TemplateResponse(
+    return render_template(
         "admin/plugins.html.j2",
+        request,
         _admin_context(request, user, plugins=plugins, msg=msg),
     )
 
@@ -501,8 +513,9 @@ async def plugin_config_page(request: Request, name: str):
     all_info = _get_all_plugins_info()
     plugin_info = next((p for p in all_info if p["name"] == name), {})
     msg = request.query_params.get("msg", "")
-    return templates.TemplateResponse(
+    return render_template(
         "admin/plugin_config.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -574,8 +587,9 @@ async def llm_settings_page(request: Request):
     }
     assignment = admin_db.get_user_llm_assignment(user["id"])
     msg = request.query_params.get("msg", "")
-    return templates.TemplateResponse(
+    return render_template(
         "admin/llm_settings.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -738,8 +752,9 @@ async def profile_page(request: Request):
         include_shared_for_user=True,
         since_days=30,
     )
-    return templates.TemplateResponse(
+    return render_template(
         "admin/profile.html.j2",
+        request,
         _admin_context(request, user, msg=msg, usage_snapshot=usage_snapshot),
     )
 
@@ -816,8 +831,9 @@ async def user_list(request: Request):
     llm_allowlists = {u["id"]: admin_db.list_user_llm_allowlist(u["id"]) for u in users}
     shared_llm_configs = admin_db.list_shared_llm_configs()
     msg = request.query_params.get("msg", "")
-    return templates.TemplateResponse(
+    return render_template(
         "admin/users.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -995,8 +1011,9 @@ async def group_list(request: Request):
         group["id"]: admin_db.list_group_llm_allowlist(group["id"]) for group in groups
     }
     msg = request.query_params.get("msg", "")
-    return templates.TemplateResponse(
+    return render_template(
         "admin/groups.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -1097,8 +1114,9 @@ async def log_viewer(request: Request):
     user = get_current_user(request)
     if not user:
         return login_redirect(request)
-    return templates.TemplateResponse(
+    return render_template(
         "admin/logs.html.j2",
+        request,
         _admin_context(request, user),
     )
 
@@ -1248,8 +1266,9 @@ async def api_keys_admin_page(request: Request):
     }
     msg = request.query_params.get("msg", "")
 
-    return templates.TemplateResponse(
+    return render_template(
         "admin/api_keys_admin.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -1365,8 +1384,9 @@ async def api_keys_user_page(request: Request):
     }
     msg = request.query_params.get("msg", "")
 
-    return templates.TemplateResponse(
+    return render_template(
         "admin/api_keys_user.html.j2",
+        request,
         _admin_context(
             request,
             user,
@@ -1411,8 +1431,9 @@ async def api_usage_page(request: Request):
         return RedirectResponse(f"{settings.root_path}/admin/profile", status_code=303)
 
     usage_snapshot = get_result_store().get_api_usage_snapshot(since_days=30)
-    return templates.TemplateResponse(
+    return render_template(
         "admin/usage.html.j2",
+        request,
         _admin_context(request, user, usage_snapshot=usage_snapshot),
     )
 

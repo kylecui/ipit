@@ -76,6 +76,13 @@ templates = Jinja2Templates(
 )
 
 
+def render_template(
+    name: str, request: Request, context: dict[str, Any]
+) -> HTMLResponse:
+    """Render a Jinja template using the Starlette-compatible call signature."""
+    return templates.TemplateResponse(request, name, context)
+
+
 def _get_latest_visible_snapshot(ip: str, user_id: int) -> dict[str, Any] | None:
     """Return the latest visible snapshot across personal and shared scopes."""
     return api_helpers.get_latest_visible_snapshot(ip, user_id)
@@ -370,8 +377,9 @@ async def dashboard(request: Request):
     t = i18n.get_translator(lang)
     recent_queries = result_store.get_user_snapshot_history(user["id"], limit=10)
     recent_reports = result_store.get_user_report_history(user["id"], limit=10)
-    response = templates.TemplateResponse(
+    response = render_template(
         "dashboard.html.j2",
+        request,
         {
             "request": request,
             "t": t,
@@ -401,8 +409,9 @@ async def analyze_web(
     try:
         verdict = await service.analyze_ip(ip, refresh=refresh, user_id=user["id"])
         html_report = html_reporter.generate(verdict, lang=lang)
-        response = templates.TemplateResponse(
+        response = render_template(
             "dashboard.html.j2",
+            request,
             {
                 "request": request,
                 "verdict": verdict,
@@ -421,8 +430,9 @@ async def analyze_web(
             },
         )
     except Exception as e:
-        response = templates.TemplateResponse(
+        response = render_template(
             "dashboard.html.j2",
+            request,
             {
                 "request": request,
                 "error": str(e),
@@ -766,8 +776,9 @@ async def comparison_page(request: Request, ip: str = ""):
         return login_redirect(request)
     lang = _get_lang(request)
     t = i18n.get_translator(lang)
-    return templates.TemplateResponse(
+    return render_template(
         "comparison.html.j2",
+        request,
         {
             "request": request,
             "t": t,
@@ -831,8 +842,9 @@ async def compare_reports_page(
         else []
     )
 
-    return templates.TemplateResponse(
+    return render_template(
         "reports_compare.html.j2",
+        request,
         {
             "request": request,
             "t": t,
