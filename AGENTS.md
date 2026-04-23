@@ -5,7 +5,8 @@
 
 ## Branch & Deployment
 
-- **Primary branch**: `master` — current mainline development happens here.
+- **Primary branch**: `master` — current stable release, always deployable.
+- **Development branch**: `dev` — active development occurs here before merging into `master`.
 - **Archived branch**: `master-archive` — preserved snapshot of the old master line before promotion.
 - **Current deployment model**: TIRE V2 is served at `/` (root path).
 - **Host restriction**: production deployments should be restricted at the reverse-proxy layer to the deployer's chosen canonical host.
