@@ -853,3 +853,18 @@ API Key 与 LLM Key 使用加密方式存储。运行时依赖稳定的 Fernet �
 TIRE V2 是一套面向 IP 威胁情报分析的软件系统，集多源情报查询、证据驱动分析、详细报告、历史留存、后台配置、权限管理与用量统计于一体。
 
 本文档从软著登记材料与实际产品说明两个角度，对软件的安装部署、功能流程、界面操作、访问路径、角色权限、数据库存储、统计能力和运维注意事项进行了系统说明，可作为软件鉴别材料及正式使用手册参考文档。
+
+---
+
+## 附录：详细文档索引
+
+本手册为综合性鉴别材料。日常使用中，建议参阅以下专题文档获取更详细的操作指导：
+
+| 文档 | 说明 | 路径 |
+|---|---|---|
+| 快速上手 | 10 分钟内完成首次 IP 分析 | [quickstart.md](quickstart.md) |
+| 部署指南 | Docker 生产部署、V1/V2 并行、安全加固 | [deployment.md](deployment.md) |
+| 配置参考 | 环境变量、插件配置、规则文件完整参考 | [configuration.md](configuration.md) |
+| 管理员指南 | 管理后台全部功能操作说明 | [admin-guide.md](admin-guide.md) |
+| 故障排查 | 常见问题症状与解决步骤 | [troubleshooting.md](troubleshooting.md) |
+| 插件架构 | V2 插件系统设计文档（面向开发者） | [V2_PLUGIN_ARCHITECTURE.md](V2_PLUGIN_ARCHITECTURE.md) |
