@@ -6,6 +6,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.5.0] — 2026-04-23
+
+### Added
+
+**V2 Plugin Architecture**
+- Migrated 9 legacy collectors to self-contained `TIPlugin` ABC with unified `collect → normalize → score` contract.
+- New plugin: ThreatBook (微步在线) — `plugins/builtin/threatbook.py`.
+- New plugin: TianJi YouMeng (天际友盟) — `plugins/builtin/tianjiyoumeng.py`.
+- Dynamic plugin registry with YAML-driven configuration (`config/plugins.yaml`).
+- Community plugin platform with sandboxed subprocess execution.
+- Plugin upload, validation, enable/disable via admin portal.
+
+**Admin Portal**
+- Full admin dashboard at `/admin/` with authentication and session management.
+- User management: create, edit, delete users with role-based access.
+- Policy groups: configurable permission groups controlling shared key access and feature availability.
+- Plugin management: enable/disable plugins, configure per-plugin API keys.
+- Shared API key management with Fernet encryption at rest.
+- Shared and personal LLM configuration management.
+- API usage statistics dashboard (plugin calls and LLM token usage).
+- Real-time log viewer via Server-Sent Events (SSE).
+- Audit logging for administrative actions.
+
+**Persistent Result Storage**
+- Query results stored as immutable snapshots in `storage/results.db`.
+- Old results archived on refresh (not overwritten), enabling historical comparison.
+- Staleness threshold (default: 7 days) triggers automatic re-query.
+- Per-API-key result sharing: shared-key queries visible to all; personal-key queries isolated.
+
+**Historical Comparison**
+- Timeline view: score changes across multiple queries of the same IP.
+- Side-by-side snapshot diff between any two query snapshots.
+- Report comparison between any two generated reports.
+- Personal snapshot and report history endpoints (`/api/v1/me/snapshots`, `/api/v1/me/reports`).
+
+**Report Enhancements**
+- Report caching with per-user isolation (LLM settings differ per user).
+- Explicit regeneration required to re-invoke LLM (no silent re-generation).
+- Reports include query date and generation timestamp.
+- Stale reports display a staleness warning banner.
+- AI-generated reports include an AIGC disclaimer.
+- Template fallback when LLM is unavailable.
+
+**API Key Management**
+- Hybrid key model: admin sets shared defaults; users can override with personal keys.
+- Fallback chain: `user_key → shared_admin_key → env_var → None`.
+- Admin policy controls whether users may consume shared keys.
+- All keys encrypted at rest using Fernet symmetric encryption.
+
+**Deployment**
+- Sub-path deployment support via `ROOT_PATH` environment variable.
+- `nginx/nginx.conf.example` provided (no hardcoded hostnames or cert paths).
+- Docker volume mapping updated: `admin.db` moved to `data/` to avoid shadowing code directory.
+
+**Documentation**
+- Comprehensive V2 documentation set: Quick Start, Deployment, Configuration, Admin Guide, Troubleshooting.
+- Bilingual README rewritten for V2 feature set.
+- Software copyright user manual (软著用户手册) with document index.
+
+### Changed
+- Analysis pipeline restructured: Plugins → Enrichers → Analyzers → Verdict → Reporters.
+- Result storage separated from TTL cache (`storage/results.db` vs `cache/cache.db`).
+- Admin database relocated from `admin/admin.db` to `data/admin.db` to prevent Docker volume conflicts.
+
+### Fixed
+- Docker volume shadowing `admin/` code directory when mounting `admin.db`.
+
+---
+
 ## [1.0.0] — 2026-03-11
 
 ### Added

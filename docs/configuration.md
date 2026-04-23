@@ -114,4 +114,4 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 - **storage/results.db**: 存储查询快照、历史记录及生成的分析报告。
 - **cache/cache.db**: 存储带 TTL 的原始数据缓存。
-- **admin/admin.db**: 存储用户信息、权限、加密后的 API 密钥、LLM 配置及审计日志。
+- **data/admin.db**: 存储用户信息、权限、加密后的 API 密钥、LLM 配置及审计日志。

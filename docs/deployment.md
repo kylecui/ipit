@@ -173,6 +173,6 @@ TIRE V2 的核心数据存储在以下文件中，建议通过 Docker Volume 进
 
 - `storage/results.db`: 存储查询快照和历史结果。
 - `cache/cache.db`: 存储 TTL 缓存数据。
-- `admin/admin.db`: 存储用户信息、API 密钥配置及系统策略。
+- `data/admin.db`: 存储用户信息、API 密钥配置及系统策略。
 
 在 `docker-compose.yml` 中，这些目录通常已配置为挂载卷，请勿随意删除相关卷数据。
