@@ -10,3 +10,4 @@ nul
 data/admin.db
 data/results.db
 data/*.db
+.vscode/settings.json
