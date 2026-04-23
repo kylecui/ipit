@@ -77,7 +77,7 @@ TIRE V2 是一套面向 IP 威胁情报分析场景的软件系统，具备多�
 - 软件名称：TIRE V2
 - 英文全称：Threat Intelligence Reasoning Engine V2
 - 软件类型：威胁情报分析与管理软件
-- 当前部署形态：支持 V1 与 V2 并行运行，其中 V2 通过 `/v2` 子路径发布
+- 当前部署形态：TIRE V2 直接运行于根路径 `/`，并通过部署者自定义域名对外提供服务
 
 ---
 
@@ -107,7 +107,7 @@ TIRE V2 是一套用于 IP 威胁情报分析的软件系统。系统通过插�
 2. 对目标 IP 提供可解释的分析结果，而不是简单原始查询结果堆叠；
 3. 为管理员提供可视化的插件配置、用户权限管理、LLM 配置与 API 用量统计能力；
 4. 为普通用户提供分析、报告、历史对比与个人配置能力；
-5. 支持 V1 与 V2 并行部署，确保新版本演进不影响旧版本正常使用。
+5. 支持以受控方式进行版本切换与部署迁移，确保主线系统稳定运行。
 
 ### 3.2 适用场景
 
@@ -227,18 +227,14 @@ curl http://127.0.0.1:8000/healthz
 {"status":"healthy","service":"threat-intel-reasoning-engine"}
 ```
 
-### 5.3 V1 / V2 并行部署要求
+### 5.3 当前部署要求
 
-根据项目要求：
+当前主线部署模式要求：
 
-- V1 运行于根路径 `/`
-- V2 运行于子路径 `/v2`
-
-因此部署 V2 时应满足：
-
-1. 设置 `ROOT_PATH=/v2`
-2. 代理层将 `/v2` 请求转发给 V2 应用
-3. 不能影响 V1 正常运行
+1. TIRE V2 直接运行于根路径 `/`
+2. `ROOT_PATH` 保持为空
+3. 反向代理域名与 TLS 证书路径由部署者自行配置
+4. 如需 Host 限制，应由部署者在代理层按实际域名配置
 
 ### 5.4 常用运维命令
 
@@ -504,64 +500,59 @@ docker compose down
 
 ### 10.1 路径说明原则
 
-TIRE V2 当前采用 **“内部路由保持原结构，外部通过 `ROOT_PATH=/v2` 子路径发布”** 的方式部署。
+TIRE V2 当前采用 **“内部路由保持原结构，外部直接以根路径 `/` 发布”** 的方式部署。
 
 因此需要区分两个概念：
 
 1. **代码内部定义路径**  
    例如：`/api/v1/ip/{ip}`
 
-2. **V2 对外实际访问路径**  
-   例如：`/v2/api/v1/ip/{ip}`
+2. **对外实际访问路径**  
+   例如：`/api/v1/ip/{ip}`
 
-### 10.2 V2 对外实际访问路径
+### 10.2 当前对外访问路径
 
-在 V2 正式部署场景中，应使用以下路径格式：
+在当前正式部署场景中，应使用以下路径格式：
 
-- `GET /v2/healthz`
-- `GET /v2/readyz`
-- `GET /v2/api/v1/ip/{ip}`
-- `POST /v2/api/v1/analyze/ip`
-- `GET /v2/api/v1/debug/sources/{ip}`
-- `POST /v2/api/v1/report/generate`
-- `POST /v2/analyze`
-- `GET /v2/admin/...`
+- `GET /healthz`
+- `GET /readyz`
+- `GET /api/v1/ip/{ip}`
+- `POST /api/v1/analyze/ip`
+- `GET /api/v1/debug/sources/{ip}`
+- `POST /api/v1/report/generate`
+- `POST /analyze`
+- `GET /admin/...`
 
-### 10.3 V1 / V2 路径对照表
+系统对外主入口域名由部署者自行决定，例如：
 
-| 功能 | V1 / 默认根路径 | V2 对外路径 |
-|---|---|---|
-| 首页 | `/` | `/v2/` |
-| 分析提交 | `/analyze` | `/v2/analyze` |
-| IP 查询 API | `/api/v1/ip/{ip}` | `/v2/api/v1/ip/{ip}` |
-| 报告生成 API | `/api/v1/report/generate` | `/v2/api/v1/report/generate` |
-| 后台登录 | `/admin/login` | `/v2/admin/login` |
-| 健康检查 | `/healthz` | `/v2/healthz` |
+```text
+https://your.domain.example/
+```
 
-### 10.4 接口用途说明
+### 10.3 接口用途说明
 
 #### 健康检查接口
 
-- `GET /v2/healthz`
-- `GET /v2/readyz`
+- `GET /healthz`
+- `GET /readyz`
 
 #### 分析接口
 
-- `GET /v2/api/v1/ip/{ip}`
-- `POST /v2/api/v1/analyze/ip`
-- `POST /v2/analyze`
+- `GET /api/v1/ip/{ip}`
+- `POST /api/v1/analyze/ip`
+- `POST /analyze`
 
 #### 报告接口
 
-- `POST /v2/api/v1/report/generate`
+- `POST /api/v1/report/generate`
 
 #### 调试接口
 
-- `GET /v2/api/v1/debug/sources/{ip}`
+- `GET /api/v1/debug/sources/{ip}`
 
 #### 用量统计接口
 
-- `GET /v2/admin/api/usage`
+- `GET /admin/api/usage`
 
 管理员访问该接口时，可获取平台级统计；普通用户访问时，获取与自己相关的范围化统计。
 
@@ -764,13 +755,14 @@ API Key 与 LLM Key 使用加密方式存储。运行时依赖稳定的 Fernet �
 - 端口是否被占用；
 - 依赖是否已正确安装。
 
-### 17.2 V2 路径访问异常
+### 17.2 根路径访问异常
 
 检查：
 
-- `ROOT_PATH=/v2` 是否设置；
-- 代理是否保留 `/v2` 路径；
-- 登录重定向是否保持 `/v2` 前缀。
+- `ROOT_PATH` 是否被错误设置为子路径；
+- 代理是否将 `/` 正确转发到 TIRE V2；
+- Host 是否与你部署时配置的域名一致；
+- 如启用了 Host 限制，非目标 Host 是否被代理层拦截。
 
 ### 17.3 某插件无结果
 
@@ -844,7 +836,7 @@ API Key 与 LLM Key 使用加密方式存储。运行时依赖稳定的 Fernet �
 
 ### 18.11 Root Path
 
-应用部署时的外部前缀路径。在当前项目中，V2 通过 `ROOT_PATH=/v2` 发布到 `/v2` 子路径下。
+应用部署时的外部前缀路径。在当前项目中，TIRE V2 直接运行于根路径 `/`，因此 `ROOT_PATH` 通常保持为空。
 
 ---
 
